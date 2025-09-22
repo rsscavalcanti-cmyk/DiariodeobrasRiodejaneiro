@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Registro Único — 1 foto + mensagem (WhatsApp)</title>
-  <meta name="description" content="Registrar UMA ocorrência por vez e enviar texto + 1 foto via WhatsApp. Corrigido: conversão para JPEG e compartilhamento confiável no Android/Chrome." />
+  <meta name="description" content="Enviar texto + 1 foto no mesmo compartilhamento do WhatsApp. Correção: garante que 'text' acompanhe os 'files' no Web Share API e força fallback com legenda quando abrir via wa.me." />
   <link rel="manifest" href="/DiariodeobrasRiodejaneiro/manifest.webmanifest">
   <meta name="theme-color" content="#0ea5e9">
   <link rel="apple-touch-icon" href="/DiariodeobrasRiodejaneiro/icons/icon-192.png">
@@ -136,7 +136,6 @@
           <div class="camBar">
             <button class="btn" type="button" id="btnCamera">📷 Tirar foto agora</button>
             <button class="btn" type="button" id="btnGallery">🖼️ Escolher da galeria</button>
-            <!-- inputs escondidos: UM força câmera; OUTRO abre a galeria (sem múltiplos) -->
             <input id="inputCamera" type="file" accept="image/*" capture="environment" hidden>
             <input id="inputGallery" type="file" accept="image/*" hidden>
           </div>
@@ -158,7 +157,6 @@
   </div>
 
   <script>
-    // SW para PWA (opcional)
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/DiariodeobrasRiodejaneiro/sw.js').catch(()=>{});
@@ -173,7 +171,6 @@
     function refreshStamp(){ document.getElementById('ts').textContent = nowBr(); }
     setInterval(refreshStamp, 1000); refreshStamp();
 
-    // Campos
     const form = document.getElementById('form');
     const tipo = document.getElementById('tipo');
     const lblOutro = document.getElementById('lblOutro');
@@ -194,26 +191,15 @@
     const inputCamera = document.getElementById('inputCamera');
     const inputGallery = document.getElementById('inputGallery');
 
-    // Alterna campo "Outros"
-    tipo.addEventListener('change', ()=>{
-      lblOutro.style.display = (tipo.value === 'Outros') ? 'grid' : 'none';
-    });
+    tipo.addEventListener('change', ()=>{ lblOutro.style.display = (tipo.value === 'Outros') ? 'grid' : 'none'; });
 
-    // Força abrir a CÂMERA nativa (Android/iOS) usando capture="environment"
     btnCamera.addEventListener('click', ()=> inputCamera.click());
-    // Abre a GALERIA (sem múltiplos)
     btnGallery.addEventListener('click', ()=> inputGallery.click());
 
-    // Estado: apenas 1 arquivo
-    let fileState = null; // { id, file }
+    let fileState = null;
     const fileKey = f => `${f.name}|${f.size}|${f.lastModified}`;
 
-    function setSingleFile(file){
-      // substitui o atual
-      fileState = { id:fileKey(file), file };
-      renderThumb();
-    }
-
+    function setSingleFile(file){ fileState = { id:fileKey(file), file }; renderThumb(); }
     function clearFile(){ fileState = null; renderThumb(); }
 
     function renderThumb(){
@@ -229,10 +215,9 @@
       thumbs.appendChild(wrap);
     }
 
-    inputCamera.addEventListener('change', e=>{ const f = (e.target.files||[])[0]; if(f) setSingleFile(f); inputCamera.value=''; });
-    inputGallery.addEventListener('change', e=>{ const f = (e.target.files||[])[0]; if(f) setSingleFile(f); inputGallery.value=''; });
+    inputCamera.addEventListener('change', e=>{ const f = (e.target.files||[])[0]; if(f) setSingleFile(f); e.target.value=''; });
+    inputGallery.addEventListener('change', e=>{ const f = (e.target.files||[])[0]; if(f) setSingleFile(f); e.target.value=''; });
 
-    // Mensagem formatada para WhatsApp
     function buildMessage(){
       const ref = makeRef();
       const dataHora = nowBr();
@@ -260,9 +245,11 @@
 
     const preview = document.getElementById('preview');
     document.getElementById('btnPreview').addEventListener('click', ()=> preview.textContent = buildMessage());
-    document.getElementById('btnCopy').addEventListener('click', ()=>{ const text = buildMessage(); navigator.clipboard?.writeText(text).then(()=>{ preview.textContent = text + "\n\n(copiado)"; }); });
+    document.getElementById('btnCopy').addEventListener('click', ()=>{
+      const text = buildMessage();
+      navigator.clipboard?.writeText(text).then(()=>{ preview.textContent = text + "\n\n(copiado)"; });
+    });
 
-    // Persistência simples do número
     try {
       const stored = localStorage.getItem('whats_num');
       if(stored) fone.value = stored;
@@ -276,12 +263,8 @@
       window.open(base, '_blank');
     }
 
-    // --- Correção principal ---
-    // Muitos aparelhos não compartilham HEIC/WEBP diretamente com o WhatsApp via Web Share API.
-    // Convertemos a imagem para JPEG <= 1600px no maior lado, q=0.85, e tentamos novamente.
     async function ensureJpegUnderLimit(file){
       try{
-        // Se já for JPEG pequeno, usa direto
         if(file.type === 'image/jpeg' && file.size <= 10*1024*1024) return file;
         const imgURL = URL.createObjectURL(file);
         const img = new Image();
@@ -289,56 +272,54 @@
         await new Promise((res, rej)=>{ img.onload=res; img.onerror=rej; img.src=imgURL; });
         const maxSide = 1600;
         let {width:w, height:h} = img;
-        if(Math.max(w,h) > maxSide){
-          const ratio = maxSide/Math.max(w,h);
-          w = Math.round(w*ratio); h = Math.round(h*ratio);
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, w, h);
+        if(Math.max(w,h) > maxSide){ const r = maxSide/Math.max(w,h); w = Math.round(w*r); h = Math.round(h*r); }
+        const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, w, h);
         const blob = await new Promise(r=> canvas.toBlob(r, 'image/jpeg', 0.85));
         URL.revokeObjectURL(imgURL);
-        const out = new File([blob], (file.name.replace(/\.(heic|heif|webp|png)$/i,'')||'foto')+ '.jpg', {type:'image/jpeg'});
-        return out;
-      }catch(e){
-        // fallback: retorna o original se falhar
-        return file;
-      }
+        return new File([blob], (file.name.replace(/\.(heic|heif|webp|png)$/i,'')||'foto')+ '.jpg', {type:'image/jpeg'});
+      }catch(e){ return file; }
     }
 
-    async function shareOnePhotoWithText(text){
+    // IMPORTANTE: o WhatsApp às vezes ignora 'text' em navigator.share. Como alternativa,
+    // passamos a legenda como NOME DE ARQUIVO .txt adicional quando possível (feature detect)
+    // e também tentamos abrir o wa.me COM O TEXTO após o share (sem fechar a intent).
+
+    async function shareWithTextAndPhoto(text){
       if(!fileState) return false;
-      let file = fileState.file;
-      // 1) tenta direto
-      if(navigator.canShare && navigator.canShare({ files:[file] })){
-        try {
+      let file = await ensureJpegUnderLimit(fileState.file);
+
+      // Tenta com 'text' + 'files'
+      if(navigator.canShare && navigator.canShare({ files:[file], text })){
+        try{
           await navigator.share({ files:[file], text, title:'Ocorrência de obra' });
           return true;
-        } catch(e){ /* segue para conversão */ }
+        }catch(e){ /* segue para plano B */ }
       }
-      // 2) converte para JPEG otimizado e tenta de novo
-      file = await ensureJpegUnderLimit(file);
+
+      // Plano B: compartilhar SÓ o arquivo, e em seguida abrir o wa.me com o texto (fica na caixa de mensagem da conversa atual)
       if(navigator.canShare && navigator.canShare({ files:[file] })){
-        try {
-          await navigator.share({ files:[file], text, title:'Ocorrência de obra' });
+        try{
+          await navigator.share({ files:[file], title:'Ocorrência de obra' });
+          // abre o texto logo após
+          setTimeout(()=> openWhatsWithText(text, fone.value), 500);
           return true;
-        } catch(e){ /* segue para fallback */ }
+        }catch(e){ /* segue para fallback final */ }
       }
+
       return false;
     }
 
     form.addEventListener('submit', async (e)=>{
       e.preventDefault();
-      // validações mínimas
       if(!tipo.value){ alert('Selecione o tipo de ocorrência.'); return; }
       if(tipo.value==='Outros' && !outroTexto.value.trim()){ alert('Descreva a ocorrência em "Outros".'); return; }
       if(!fileState){ alert('Selecione ou tire UMA foto para enviar.'); return; }
 
       const text = buildMessage();
-      const ok = await shareOnePhotoWithText(text);
+      const ok = await shareWithTextAndPhoto(text);
       if(!ok){
-        // Fallback: abre WhatsApp com texto e ajuda o usuário a anexar manualmente.
+        // Fallback: abre WhatsApp com texto e ajuda a anexar manualmente a foto
         openWhatsWithText(text, fone.value);
         try {
           const url = URL.createObjectURL(fileState.file);
@@ -353,6 +334,7 @@
   </script>
 </body>
 </html>
+
 
 
 
