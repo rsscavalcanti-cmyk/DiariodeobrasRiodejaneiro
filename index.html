@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Registro Único — Ocorrências (WhatsApp)</title>
-  <meta name="description" content="Registrar UMA ocorrência por vez e enviar texto + card-imagem + anexos via WhatsApp. Campo 'Bloco/Setor' livre, excluir fotos duplicadas e abertura de câmera nativa." />
+  <meta name="description" content="Registrar UMA ocorrência por vez e enviar texto + card-imagem + anexos via WhatsApp. Campo 'Bloco/Setor' livre, excluir fotos duplicadas e abertura de câmera nativa garantida." />
   <meta name="theme-color" content="#0ea5e9" />
   <style>
     :root{ --bg:#f6fbff; --paper:#fff; --ink:#0f172a; --muted:#667085; --line:#e5eef7; --brand:#0ea5e9; --ok:#16a34a; --warn:#f59e0b; --bad:#ef4444; --radius:16px }
@@ -34,7 +34,6 @@
     .opts{display:flex;gap:12px;align-items:center}
     footer{font-size:11px;color:var(--muted);padding:8px;text-align:center}
     canvas{display:none}
-    /* câmera */
     .camBar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
   </style>
 </head>
@@ -136,12 +135,14 @@
 
         <label>Anexos (opcional) — fotos/vídeos
           <div class="camBar">
-            <!-- Abre a câmera nativa do aparelho diretamente -->
-            <button class="btn" type="button" id="btnNativeCamera">📷 Abrir câmera do aparelho</button>
-            <input id="midia" type="file" accept="image/*,video/*" multiple capture="environment" style="display:none" />
+            <button class="btn" type="button" id="btnCamera">📷 Tirar foto agora</button>
+            <button class="btn" type="button" id="btnGallery">🖼️ Escolher da galeria</button>
+            <!-- inputs escondidos: um força câmera, outro abre a galeria -->
+            <input id="inputCamera" type="file" accept="image/*" capture="environment" hidden>
+            <input id="inputGallery" type="file" accept="image/*,video/*" multiple hidden>
           </div>
           <div class="thumbs" id="thumbs"></div>
-          <div class="help">Dica: toque e segure em uma miniatura para apagar; o app também filtra duplicadas automaticamente.</div>
+          <div class="help">Toque no "×" para apagar uma miniatura. Duplicadas são ignoradas automaticamente.</div>
         </label>
 
         <div class="actions">
@@ -157,11 +158,9 @@
     <footer>— <strong><em>Registro para Gestão</em></strong></footer>
   </div>
 
-  <!-- Canvas usado para gerar o card-imagem -->
   <canvas id="cardCanvas" width="1080" height="1350"></canvas>
 
   <script>
-    // ====== Util: data/hora Brasília ======
     const tz = 'America/Sao_Paulo';
     function nowBr(){ const d = new Date(); return new Intl.DateTimeFormat('pt-BR',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(d); }
     function ymdBrParts(){ const d = new Date(); const z = new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).formatToParts(d); const g = Object.fromEntries(z.map(p=>[p.type,p.value])); return g; }
@@ -170,7 +169,6 @@
     function refreshStamp(){ document.getElementById('ts').textContent = nowBr(); }
     setInterval(refreshStamp, 1000); refreshStamp();
 
-    // ====== DOM refs ======
     const form = document.getElementById('form');
     const tipo = document.getElementById('tipo');
     const lblOutro = document.getElementById('lblOutro');
@@ -184,40 +182,31 @@
     const prio = document.getElementById('prio');
     const prazo = document.getElementById('prazo');
     const fone = document.getElementById('fone');
-    const midia = document.getElementById('midia');
     const thumbs = document.getElementById('thumbs');
-    const preview = document.getElementById('preview');
     const chkCard = document.getElementById('chkCard');
     const cardCanvas = document.getElementById('cardCanvas');
 
-    // ====== Persistência do último número ======
-    const KEY_FONE = 'whats-fone-default';
-    fone.value = localStorage.getItem(KEY_FONE) || '';
-    fone.addEventListener('change', ()=> localStorage.setItem(KEY_FONE, (fone.value||'').replace(/\D/g,'')));
+    const btnCamera = document.getElementById('btnCamera');
+    const btnGallery = document.getElementById('btnGallery');
+    const inputCamera = document.getElementById('inputCamera');
+    const inputGallery = document.getElementById('inputGallery');
 
-    // ====== Estado de anexos (com deduplicação) ======
-    let filesState = []; // { id, file, hash }
+    // Força abrir a CÂMERA nativa (Android/iOS) usando capture="environment"
+    btnCamera.addEventListener('click', ()=> inputCamera.click());
+    // Abre a GALERIA (ou seletor múltiplo)
+    btnGallery.addEventListener('click', ()=> inputGallery.click());
 
-    // Gera um id estável (nome+tamanho+última modificação). Evita dupl.
-    function fileKey(f){ return `${f.name}|${f.size}|${f.lastModified}`; }
+    // Deduplicação por name|size|lastModified
+    let filesState = []; // { id, file }
+    const fileKey = f => `${f.name}|${f.size}|${f.lastModified}`;
 
     function addFiles(list){
       for(const f of list){
-        const key = fileKey(f);
-        if(filesState.some(x=>x.id===key)) continue; // dedup
-        filesState.push({ id:key, file:f });
-        addThumb(key, f);
+        const id = fileKey(f);
+        if(filesState.some(x=>x.id===id)) continue;
+        filesState.push({id, file:f});
+        addThumb(id, f);
       }
-      renderCount();
-    }
-
-    function removeFile(id){
-      const i = filesState.findIndex(x=>x.id===id);
-      if(i>-1){ filesState.splice(i,1); const el = document.querySelector(`[data-id="${id}"]`); el?.remove(); renderCount(); }
-    }
-
-    function renderCount(){
-      // poderíamos mostrar total se quiser
     }
 
     function addThumb(id, file){
@@ -227,18 +216,18 @@
       wrap.dataset.id = id;
       wrap.innerHTML = `<img src="${url}" alt="${file.name}"><button title="Apagar">×</button>`;
       wrap.querySelector('button').addEventListener('click', ()=> removeFile(id));
-      // apaga ao segurar 700ms
-      let pressT=null; wrap.addEventListener('touchstart',()=>{ pressT=setTimeout(()=>removeFile(id),700); }); wrap.addEventListener('touchend',()=>clearTimeout(pressT));
       thumbs.appendChild(wrap);
     }
 
-    // Input escondido abre a câmera nativa (Android/iOS) por causa do capture="environment"
-    document.getElementById('btnNativeCamera').addEventListener('click', ()=> midia.click());
+    function removeFile(id){
+      const i = filesState.findIndex(x=>x.id===id);
+      if(i>-1){ filesState.splice(i,1); document.querySelector(`[data-id="${id}"]`)?.remove(); }
+    }
 
-    // Quando selecionar via câmera/galeria
-    midia.addEventListener('change', (e)=>{ const list = Array.from(e.target.files||[]); addFiles(list); midia.value = ''; });
+    inputCamera.addEventListener('change', e=>{ const list = Array.from(e.target.files||[]); addFiles(list); inputCamera.value=''; });
+    inputGallery.addEventListener('change', e=>{ const list = Array.from(e.target.files||[]); addFiles(list); inputGallery.value=''; });
 
-    // ====== Template do texto ======
+    // Mensagem
     function buildMessage(){
       const ref = makeRef();
       const dataHora = nowBr();
@@ -266,16 +255,16 @@
       return linhas.join('\n');
     }
 
-    function updatePreview(){ preview.textContent = buildMessage(); }
-    document.getElementById('btnPreview').addEventListener('click', updatePreview);
-    document.getElementById('btnCopy').addEventListener('click', ()=>{ const text = buildMessage(); navigator.clipboard?.writeText(text).then(()=>{ preview.textContent = text + "\n\n(copiado para a área de transferência)"; }); });
-    document.getElementById('btnClear').addEventListener('click', ()=>{ form.reset(); thumbs.innerHTML=''; filesState=[]; updatePreview(); });
+    const preview = document.getElementById('preview');
+    document.getElementById('btnPreview').addEventListener('click', ()=> preview.textContent = buildMessage());
+    document.getElementById('btnCopy').addEventListener('click', ()=>{ const text = buildMessage(); navigator.clipboard?.writeText(text).then(()=>{ preview.textContent = text + "\n\n(copiado)"; }); });
+    document.getElementById('btnClear').addEventListener('click', ()=>{ form.reset(); thumbs.innerHTML=''; filesState=[]; preview.textContent=''; });
 
-    // ====== CARD ======
+    // Card
     function wrapText(ctx, text, x, y, maxW, lineH){ const words = text.split(/\s+/); let line=''; const lines=[]; for(let i=0;i<words.length;i++){ const test=line+words[i]+' '; if(ctx.measureText(test).width>maxW && i>0){ lines.push(line.trim()); line=words[i]+' '; } else { line=test; } } lines.push(line.trim()); lines.forEach((ln,i)=>ctx.fillText(ln,x,y+i*lineH)); return y+(lines.length-1)*lineH; }
     async function buildCardFile(){ const W=1080,H=1350,P=64; const ctx=cardCanvas.getContext('2d'); ctx.clearRect(0,0,W,H); const g=ctx.createLinearGradient(0,0,0,H); g.addColorStop(0,'#eaf6ff'); g.addColorStop(1,'#ffffff'); ctx.fillStyle=g; ctx.fillRect(0,0,W,H); ctx.fillStyle='#0f172a'; ctx.font='bold 48px Inter, Arial'; ctx.fillText('OCORRÊNCIA DE OBRA', P, P+8); const ref=makeRef(); ctx.font='bold 28px Inter, Arial'; ctx.fillStyle='#0ea5e9'; ctx.fillText(`Ref: ${ref}`, P, P+54); const boxY=P+90, boxH=H-boxY-180, boxR=28; ctx.fillStyle='#00000010'; ctx.fillRect(P+6,boxY+6,W-P*2,boxH); ctx.fillStyle='#ffffff'; ctx.strokeStyle='#e5eef7'; ctx.lineWidth=4; const bw=W-P*2,bh=boxH,x=P,y=boxY,r=boxR; ctx.beginPath(); ctx.moveTo(x+r,y); ctx.lineTo(x+bw-r,y); ctx.quadraticCurveTo(x+bw,y,x+bw,y+r); ctx.lineTo(x+bw,y+bh-r); ctx.quadraticCurveTo(x+bw,y+bh,x+bw-r,y+bh); ctx.lineTo(x+r,y+bh); ctx.quadraticCurveTo(x,y+bh,x,y+bh-r); ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.fillStyle='#0f172a'; ctx.font='600 34px Inter, Arial'; let yy=y+56; const lh=44, maxW=bw-40, xx=x+20; const linhas=[ `Tipo: ${tipo.value==='Outros' ? (outroTexto.value.trim()||'(descrever)') : (tipo.value||'(sem tipo)')}`, `Bloco/Setor: ${bloco.value||'-'}`, `Pav/Unidade: ${pav.value||'-'}`, `Local: ${localDet.value||'-'}`, `Descrição:`]; linhas.forEach(t=>{ ctx.fillText(t,xx,yy); yy+=lh; }); ctx.font='400 30px Inter, Arial'; yy=wrapText(ctx,(desc.value.trim()||'-'),xx,yy,maxW,40)+26; ctx.font='600 34px Inter, Arial'; [ `Ação solicitada: ${acao.value}`, `Prioridade: ${prio.value}`, `Prazo desejado: ${prazo.value? isoBrDate(prazo.value): '-'}`, `Resp./Equipe: ${resp.value||'-'}`, `Data/Hora (Brasília): ${nowBr()}` ].forEach(t=>{ ctx.fillText(t,xx,yy); yy+=lh; }); ctx.font='italic 700 26px Inter, Arial'; ctx.fillStyle='#64748b'; ctx.fillText('— Registro para Gestão', P, H-90); ctx.save(); ctx.translate(W-140,H-70); ctx.rotate(-Math.PI/12); ctx.globalAlpha=0.08; ctx.fillStyle='#0ea5e9'; ctx.font='900 90px Inter, Arial'; ctx.fillText('SYSTEM', -200, 0); ctx.restore(); const blob = await new Promise(res=> cardCanvas.toBlob(res, 'image/png', 0.92)); return new File([blob], `ocorrencia_${ref}.png`, {type:'image/png'}); }
 
-    // ====== Envio ======
+    // Envio
     function openWhatsWithText(text, number){ const encoded = encodeURIComponent(text); const num = (number||'').replace(/\D/g,''); const base = num ? `https://wa.me/${num}?text=${encoded}` : `https://wa.me/?text=${encoded}`; window.open(base, '_blank'); }
     async function shareWithFiles(text){ const list=[...filesState.map(x=>x.file)]; if(chkCard.checked){ try{ const card=await buildCardFile(); list.unshift(card); }catch(e){} } if(list.length && navigator.canShare && navigator.canShare({ files:list })){ try{ await navigator.share({ files:list, text, title:'Ocorrência de obra' }); return true; }catch(e){ return false; } } return false; }
 
@@ -283,11 +272,9 @@
       e.preventDefault();
       if(!tipo.value){ alert('Selecione o tipo de ocorrência.'); return; }
       if(tipo.value==='Outros' && !outroTexto.value.trim()){ alert('Descreva a ocorrência em "Outros".'); return; }
-      updatePreview();
       const text = buildMessage();
       const shared = await shareWithFiles(text);
       if(!shared){
-        // fallback: abre o WhatsApp com o texto e oferece o card pra salvar manualmente
         if(chkCard.checked){ try{ const card=await buildCardFile(); const url=URL.createObjectURL(card); const w=window.open('about:blank','_blank'); if(w){ w.document.write(`<p style=\"font-family:system-ui,Arial\">Salve a imagem e anexe no WhatsApp:</p><img src=\"${url}\" style=\"max-width:100%;height:auto;border:1px solid #ddd;border-radius:8px\">`); w.document.close(); } }catch(e){} }
         openWhatsWithText(text, fone.value);
       }
