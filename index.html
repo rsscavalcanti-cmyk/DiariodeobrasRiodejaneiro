@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Registro Único — Ocorrências (WhatsApp)</title>
-  <meta name="description" content="Registrar UMA ocorrência por vez e enviar texto + imagem formatada (card) + anexos via WhatsApp quando suportado." />
+  <meta name="description" content="Registrar UMA ocorrência por vez e enviar texto + imagem formatada (card) + anexos via WhatsApp quando suportado. Campo 'Bloco/Setor' livre." />
   <meta name="theme-color" content="#0ea5e9" />
   <style>
     :root{ --bg:#f6fbff; --paper:#fff; --ink:#0f172a; --muted:#667085; --line:#e5eef7; --brand:#0ea5e9; --ok:#16a34a; --warn:#f59e0b; --bad:#ef4444; --radius:16px }
@@ -71,14 +71,15 @@
         </div>
 
         <div class="row">
-          <label>Bloco
-            <select id="bloco">
-              <option>Bloco 1</option>
-              <option>Bloco 2</option>
-              <option>Bloco 3</option>
-              <option>Embasamento</option>
-              <option>Áreas externas</option>
-            </select>
+          <label>Bloco/Setor (livre — número ou local)
+            <input id="bloco" placeholder="Ex.: 2 | Embasamento | Áreas externas" list="blocosSug" />
+            <datalist id="blocosSug">
+              <option value="Bloco 1"></option>
+              <option value="Bloco 2"></option>
+              <option value="Bloco 3"></option>
+              <option value="Embasamento"></option>
+              <option value="Áreas externas"></option>
+            </datalist>
           </label>
           <label>Pavimento / Unidade (Apto/Loja)
             <input id="pav" placeholder="Ex.: 12º / 1203" />
@@ -145,7 +146,7 @@
       </form>
     </section>
 
-    <footer>— Registro <strong>para Gestão</strong></footer>
+    <footer>— <strong><em>Registro para Gestão</em></strong></footer>
   </div>
 
   <!-- Canvas usado para gerar o card-imagem -->
@@ -214,7 +215,7 @@
         `*🏗️ OCORRÊNCIA DE OBRA*  •  *Ref:* ${ref}`,
         `━━━━━━━━━━━━━━━━━━━━`,
         `*Tipo:* ${t2}`,
-        `*📍 Bloco/Setor:* ${bloco.value}`,
+        `*📍 Bloco/Setor:* ${bloco.value||'-'}`,
         `*🏢 Pav/Unidade:* ${pav.value||'-'}`,
         `*🧭 Local:* ${localDet.value||'-'}`,
         `*📝 Descrição:* ${desc.value.trim()||'-'}`,
@@ -225,7 +226,7 @@
         `*🕒 Data/Hora (Brasília):* ${dataHora}`,
         anexos? `*📎 Anexos:* ${anexos} arquivo(s)` : null,
         `━━━━━━━━━━━━━━━━━━━━`,
-        `_— Desenvolvido por Renato Stofel Cavalcanti_`
+        `*_*Registro para Gestão*_*`
       ].filter(Boolean);
       return linhas.join('\n');
     }
@@ -242,10 +243,10 @@
 
     // ====== Geração do CARD (imagem) ======
     function wrapText(ctx, text, x, y, maxW, lineH){
-      const words = text.split(/\s+/); let line = ''; let yy = y; const lines=[];
+      const words = text.split(/\s+/); let line = ''; const lines=[];
       for(let i=0;i<words.length;i++){
         const test = line + words[i] + ' ';
-        if(ctx.measureText(test).width > maxW && i>0){ lines.push(line.trim()); line = words[i] + ' '; yy+=lineH; }
+        if(ctx.measureText(test).width > maxW && i>0){ lines.push(line.trim()); line = words[i] + ' '; }
         else{ line = test; }
       }
       lines.push(line.trim());
@@ -254,11 +255,9 @@
     }
 
     async function buildCardFile(){
-      // Config do card
       const W=1080, H=1350, P=64; // 4:5 portrait
       const ctx = canvas.getContext('2d');
       ctx.clearRect(0,0,W,H);
-      // Fundo gradiente
       const g = ctx.createLinearGradient(0,0,0,H);
       g.addColorStop(0,'#eaf6ff'); g.addColorStop(1,'#ffffff');
       ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
@@ -276,11 +275,8 @@
 
       // Caixa
       const boxY = P+90; const boxH = H - boxY - 180; const boxR = 28;
-      // sombra leve
       ctx.fillStyle = '#00000010'; ctx.fillRect(P+6, boxY+6, W-P*2, boxH);
-      // caixa branca
       ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#e5eef7'; ctx.lineWidth = 4;
-      // rounded rect manual
       const bw=W-P*2; const bh=boxH; const x=P, y=boxY, r=boxR;
       ctx.beginPath();
       ctx.moveTo(x+r,y); ctx.lineTo(x+bw-r,y); ctx.quadraticCurveTo(x+bw,y,x+bw,y+r);
@@ -295,7 +291,7 @@
       let yy = y + 56; const lh = 44; const maxW = bw - 40; const xx = x + 20;
       const linhas = [
         `Tipo: ${tipo.value === 'Outros' ? (outroTexto.value.trim()||'(descrever)') : (tipo.value||'(sem tipo)')}`,
-        `Bloco/Setor: ${bloco.value}`,
+        `Bloco/Setor: ${bloco.value||'-'}`,
         `Pav/Unidade: ${pav.value||'-'}`,
         `Local: ${localDet.value||'-'}`,
         `Descrição:`,
@@ -315,9 +311,9 @@
       ];
       extra.forEach(t=>{ ctx.fillText(t, xx, yy); yy += lh; });
 
-      // Assinatura
-      ctx.font='italic 26px Inter, Arial'; ctx.fillStyle='#64748b';
-      ctx.fillText('— Desenvolvido por Renato Stofel Cavalcanti', P, H-90);
+      // Assinatura neutra (negrito + itálico)
+      ctx.font='italic 700 26px Inter, Arial'; ctx.fillStyle='#64748b';
+      ctx.fillText('— Registro para Gestão', P, H-90);
 
       // Marca d'água leve
       ctx.save(); ctx.translate(W-140, H-70); ctx.rotate(-Math.PI/12);
