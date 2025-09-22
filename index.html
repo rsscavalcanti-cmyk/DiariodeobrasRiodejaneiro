@@ -10,7 +10,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Registro Único — Ocorrências (WhatsApp)</title>
   <meta name="description" content="Registrar UMA ocorrência por vez e enviar texto + card-imagem + anexos via WhatsApp. Campo 'Bloco/Setor' livre, excluir fotos duplicadas e abertura de câmera nativa garantida." />
-  <meta name="theme-color" content="#0ea5e9" />
   <style>
     :root{ --bg:#f6fbff; --paper:#fff; --ink:#0f172a; --muted:#667085; --line:#e5eef7; --brand:#0ea5e9; --ok:#16a34a; --warn:#f59e0b; --bad:#ef4444; --radius:16px }
     *{box-sizing:border-box}
@@ -42,6 +41,14 @@
     .camBar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
   </style>
 </head>
+  <!-- antes de </body> -->
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/DiariodeobrasRiodejaneiro/sw.js').catch(console.error);
+    });
+  }
+</script>
 <body>
   <div class="wrap">
     <header>
