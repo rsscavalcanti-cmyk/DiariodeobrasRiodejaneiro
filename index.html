@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Registro Único — Ocorrências (WhatsApp)</title>
-  <meta name="description" content="Registrar UMA ocorrência por vez e enviar texto + imagem formatada (card) + anexos via WhatsApp quando suportado. Campo 'Bloco/Setor' livre." />
+  <meta name="description" content="Registrar UMA ocorrência por vez e enviar texto + card-imagem + anexos via WhatsApp. Campo 'Bloco/Setor' livre e captura de câmera integrada." />
   <meta name="theme-color" content="#0ea5e9" />
   <style>
     :root{ --bg:#f6fbff; --paper:#fff; --ink:#0f172a; --muted:#667085; --line:#e5eef7; --brand:#0ea5e9; --ok:#16a34a; --warn:#f59e0b; --bad:#ef4444; --radius:16px }
@@ -32,6 +32,10 @@
     .opts{display:flex;gap:12px;align-items:center}
     footer{font-size:11px;color:var(--muted);padding:8px;text-align:center}
     canvas{display:none}
+    /* câmera */
+    .camBar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .camWrap{display:none;border:2px dashed var(--line);border-radius:12px;padding:10px}
+    video{width:100%;max-height:260px;border-radius:10px;background:#000}
   </style>
 </head>
 <body>
@@ -131,9 +135,21 @@
         </div>
 
         <label>Anexos (opcional) — fotos/vídeos
+          <!-- input rápido que pede câmera (mobile) -->
+          <div class="camBar">
+            <button class="btn" type="button" id="btnOpenCam">📷 Usar câmera agora</button>
+            <span class="help">Funciona melhor via HTTPS e no celular. Em iOS/Android, o seletor abaixo já abre a câmera com <code>capture</code>.</span>
+          </div>
+          <div class="camWrap" id="camWrap">
+            <video id="cam" playsinline autoplay muted></video>
+            <div style="display:flex;gap:8px;margin-top:8px">
+              <button class="btn primary" type="button" id="btnSnap">Tirar foto</button>
+              <button class="btn" type="button" id="btnCloseCam">Fechar câmera</button>
+            </div>
+          </div>
           <input id="midia" type="file" accept="image/*,video/*" multiple capture="environment" />
           <div class="thumbs" id="thumbs"></div>
-          <div class="help">⚠️ Limitação do WhatsApp Web: anexos só vão *automaticamente* em aparelhos com suporte ao *Web Share* (Android/iOS modernos). No desktop, enviaremos o texto e abriremos a imagem para você salvar e anexar manualmente.</div>
+          <div class="help">⚠️ WhatsApp Web não aceita anexos por URL. Em celulares com <em>Web Share</em>, enviamos arquivos direto; no desktop, abriremos o card para você salvar e anexar.</div>
         </label>
 
         <div class="actions">
@@ -149,22 +165,15 @@
     <footer>— <strong><em>Registro para Gestão</em></strong></footer>
   </div>
 
-  <!-- Canvas usado para gerar o card-imagem -->
+  <!-- Canvas usado para gerar o card-imagem e para o snapshot da câmera -->
   <canvas id="cardCanvas" width="1080" height="1350"></canvas>
+  <canvas id="snapCanvas" width="1600" height="1200" style="display:none"></canvas>
 
   <script>
     // ====== Util: data/hora Brasília ======
     const tz = 'America/Sao_Paulo';
-    function nowBr(){
-      const d = new Date();
-      return new Intl.DateTimeFormat('pt-BR',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(d);
-    }
-    function ymdBrParts(){
-      const d = new Date();
-      const z = new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).formatToParts(d);
-      const g = Object.fromEntries(z.map(p=>[p.type,p.value]));
-      return g; // {year,month,day,hour,minute}
-    }
+    function nowBr(){ const d = new Date(); return new Intl.DateTimeFormat('pt-BR',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(d); }
+    function ymdBrParts(){ const d = new Date(); const z = new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).formatToParts(d); const g = Object.fromEntries(z.map(p=>[p.type,p.value])); return g; }
     function makeRef(){ const g = ymdBrParts(); return `OC-${g.year}${g.month}${g.day}-${g.hour}${g.minute}`; }
     function isoBrDate(d){ if(!d) return ''; const [y,m,da] = d.split('-'); return `${da}/${m}/${y}` }
     function refreshStamp(){ document.getElementById('ts').textContent = nowBr(); }
@@ -188,7 +197,16 @@
     const thumbs = document.getElementById('thumbs');
     const preview = document.getElementById('preview');
     const chkCard = document.getElementById('chkCard');
-    const canvas = document.getElementById('cardCanvas');
+    const cardCanvas = document.getElementById('cardCanvas');
+
+    // Câmera
+    const camWrap = document.getElementById('camWrap');
+    const cam = document.getElementById('cam');
+    const btnOpenCam = document.getElementById('btnOpenCam');
+    const btnCloseCam = document.getElementById('btnCloseCam');
+    const btnSnap = document.getElementById('btnSnap');
+    const snapCanvas = document.getElementById('snapCanvas');
+    let camStream = null;
 
     // ====== Persistência do último número ======
     const KEY_FONE = 'whats-fone-default';
@@ -197,11 +215,9 @@
 
     // ====== UI dinâmica ======
     tipo.addEventListener('change', ()=>{ lblOutro.style.display = (tipo.value === 'Outros') ? '' : 'none'; });
-    midia.addEventListener('change', (e)=>{
-      thumbs.innerHTML = '';
-      const files = Array.from(e.target.files||[]).slice(0, 20);
-      for(const f of files){ const url = URL.createObjectURL(f); const img = document.createElement('img'); img.src = url; img.alt = f.name; thumbs.appendChild(img); }
-    });
+    midia.addEventListener('change', (e)=>{ thumbs.innerHTML = ''; const files = Array.from(e.target.files||[]).slice(0, 20); files.forEach(f=> addThumbFromFile(f)); });
+
+    function addThumbFromFile(file){ const url = URL.createObjectURL(file); const img = document.createElement('img'); img.src = url; img.alt = file.name; thumbs.appendChild(img); }
 
     // ====== Template do texto para WhatsApp ======
     function buildMessage(){
@@ -210,7 +226,7 @@
       const t = tipo.value || '(sem tipo)';
       const t2 = (t === 'Outros' ? (outroTexto.value.trim()||'(descrever)') : t);
       const prazoFmt = (prazo.value? isoBrDate(prazo.value): '-');
-      const anexos = (midia.files||[]).length;
+      const anexos = ((midia.files||[]).length + extraFiles.length);
       const linhas = [
         `*🏗️ OCORRÊNCIA DE OBRA*  •  *Ref:* ${ref}`,
         `━━━━━━━━━━━━━━━━━━━━`,
@@ -233,112 +249,56 @@
 
     function updatePreview(){ preview.textContent = buildMessage(); }
     document.getElementById('btnPreview').addEventListener('click', updatePreview);
-
-    document.getElementById('btnCopy').addEventListener('click', ()=>{
-      const text = buildMessage();
-      navigator.clipboard?.writeText(text).then(()=>{ preview.textContent = text + "\n\n(copiado para a área de transferência)"; });
-    });
-
-    document.getElementById('btnClear').addEventListener('click', ()=>{ form.reset(); thumbs.innerHTML=''; updatePreview(); tipo.dispatchEvent(new Event('change')); });
+    document.getElementById('btnCopy').addEventListener('click', ()=>{ const text = buildMessage(); navigator.clipboard?.writeText(text).then(()=>{ preview.textContent = text + "\n\n(copiado para a área de transferência)"; }); });
+    document.getElementById('btnClear').addEventListener('click', ()=>{ form.reset(); thumbs.innerHTML=''; extraFiles.length=0; updatePreview(); tipo.dispatchEvent(new Event('change')); stopCam(); });
 
     // ====== Geração do CARD (imagem) ======
-    function wrapText(ctx, text, x, y, maxW, lineH){
-      const words = text.split(/\s+/); let line = ''; const lines=[];
-      for(let i=0;i<words.length;i++){
-        const test = line + words[i] + ' ';
-        if(ctx.measureText(test).width > maxW && i>0){ lines.push(line.trim()); line = words[i] + ' '; }
-        else{ line = test; }
+    function wrapText(ctx, text, x, y, maxW, lineH){ const words = text.split(/\s+/); let line=''; const lines=[]; for(let i=0;i<words.length;i++){ const test=line+words[i]+' '; if(ctx.measureText(test).width>maxW && i>0){ lines.push(line.trim()); line=words[i]+' '; } else { line=test; } } lines.push(line.trim()); lines.forEach((ln,i)=>ctx.fillText(ln,x,y+i*lineH)); return y+(lines.length-1)*lineH; }
+
+    async function buildCardFile(){ const W=1080,H=1350,P=64; const ctx=cardCanvas.getContext('2d'); ctx.clearRect(0,0,W,H); const g=ctx.createLinearGradient(0,0,0,H); g.addColorStop(0,'#eaf6ff'); g.addColorStop(1,'#ffffff'); ctx.fillStyle=g; ctx.fillRect(0,0,W,H); ctx.fillStyle='#0f172a'; ctx.font='bold 48px Inter, Arial'; ctx.fillText('OCORRÊNCIA DE OBRA', P, P+8); const ref=makeRef(); ctx.font='bold 28px Inter, Arial'; ctx.fillStyle='#0ea5e9'; ctx.fillText(`Ref: ${ref}`, P, P+54); const boxY=P+90, boxH=H-boxY-180, boxR=28; ctx.fillStyle='#00000010'; ctx.fillRect(P+6,boxY+6,W-P*2,boxH); ctx.fillStyle='#ffffff'; ctx.strokeStyle='#e5eef7'; ctx.lineWidth=4; const bw=W-P*2,bh=boxH,x=P,y=boxY,r=boxR; ctx.beginPath(); ctx.moveTo(x+r,y); ctx.lineTo(x+bw-r,y); ctx.quadraticCurveTo(x+bw,y,x+bw,y+r); ctx.lineTo(x+bw,y+bh-r); ctx.quadraticCurveTo(x+bw,y+bh,x+bw-r,y+bh); ctx.lineTo(x+r,y+bh); ctx.quadraticCurveTo(x,y+bh,x,y+bh-r); ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.fillStyle='#0f172a'; ctx.font='600 34px Inter, Arial'; let yy=y+56; const lh=44, maxW=bw-40, xx=x+20; const linhas=[ `Tipo: ${tipo.value==='Outros' ? (outroTexto.value.trim()||'(descrever)') : (tipo.value||'(sem tipo)')}`, `Bloco/Setor: ${bloco.value||'-'}`, `Pav/Unidade: ${pav.value||'-'}`, `Local: ${localDet.value||'-'}`, `Descrição:`]; linhas.forEach(t=>{ ctx.fillText(t,xx,yy); yy+=lh; }); ctx.font='400 30px Inter, Arial'; yy=wrapText(ctx,(desc.value.trim()||'-'),xx,yy,maxW,40)+26; ctx.font='600 34px Inter, Arial'; [ `Ação solicitada: ${acao.value}`, `Prioridade: ${prio.value}`, `Prazo desejado: ${prazo.value? isoBrDate(prazo.value): '-'}`, `Resp./Equipe: ${resp.value||'-'}`, `Data/Hora (Brasília): ${nowBr()}` ].forEach(t=>{ ctx.fillText(t,xx,yy); yy+=lh; }); ctx.font='italic 700 26px Inter, Arial'; ctx.fillStyle='#64748b'; ctx.fillText('— Registro para Gestão', P, H-90); ctx.save(); ctx.translate(W-140,H-70); ctx.rotate(-Math.PI/12); ctx.globalAlpha=0.08; ctx.fillStyle='#0ea5e9'; ctx.font='900 90px Inter, Arial'; ctx.fillText('SYSTEM', -200, 0); ctx.restore(); const blob = await new Promise(res=> cardCanvas.toBlob(res, 'image/png', 0.92)); return new File([blob], `ocorrencia_${ref}.png`, {type:'image/png'}); }
+
+    // ====== CÂMERA: abrir, fechar, tirar foto ======
+    async function openCam(){
+      if(camStream) return; // já aberta
+      try{
+        const constraints = { video: { facingMode: { ideal: 'environment' } } , audio:false };
+        camStream = await navigator.mediaDevices.getUserMedia(constraints);
+        cam.srcObject = camStream; camWrap.style.display='block';
+      }catch(err){
+        alert('Não foi possível acessar a câmera. Garanta que está em HTTPS e permita o acesso. Você ainda pode usar o seletor de arquivos para abrir a câmera.');
+        console.warn(err);
       }
-      lines.push(line.trim());
-      lines.forEach((ln, idx)=> ctx.fillText(ln, x, y + idx*lineH));
-      return y + (lines.length-1)*lineH;
     }
+    function stopCam(){ if(camStream){ camStream.getTracks().forEach(t=>t.stop()); cam.srcObject=null; camStream=null; camWrap.style.display='none'; } }
 
-    async function buildCardFile(){
-      const W=1080, H=1350, P=64; // 4:5 portrait
-      const ctx = canvas.getContext('2d');
-      ctx.clearRect(0,0,W,H);
-      const g = ctx.createLinearGradient(0,0,0,H);
-      g.addColorStop(0,'#eaf6ff'); g.addColorStop(1,'#ffffff');
-      ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
-
-      // Title bar
-      ctx.fillStyle='#0f172a';
-      ctx.font='bold 48px Inter, Arial';
-      ctx.fillText('OCORRÊNCIA DE OBRA', P, P+8);
-
-      // Subinfo
+    async function snapPhoto(){
+      if(!camStream){ await openCam(); if(!camStream) return; }
+      const track = camStream.getVideoTracks()[0];
+      const settings = track.getSettings();
+      const w = settings.width || 1600; const h = settings.height || 1200;
+      const sc = snapCanvas; sc.width = w; sc.height = h;
+      const ctx = sc.getContext('2d'); ctx.drawImage(cam, 0, 0, w, h);
+      const blob = await new Promise(res=> sc.toBlob(res, 'image/jpeg', 0.92));
       const ref = makeRef();
-      ctx.font='bold 28px Inter, Arial';
-      ctx.fillStyle='#0ea5e9';
-      ctx.fillText(`Ref: ${ref}`, P, P+54);
-
-      // Caixa
-      const boxY = P+90; const boxH = H - boxY - 180; const boxR = 28;
-      ctx.fillStyle = '#00000010'; ctx.fillRect(P+6, boxY+6, W-P*2, boxH);
-      ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#e5eef7'; ctx.lineWidth = 4;
-      const bw=W-P*2; const bh=boxH; const x=P, y=boxY, r=boxR;
-      ctx.beginPath();
-      ctx.moveTo(x+r,y); ctx.lineTo(x+bw-r,y); ctx.quadraticCurveTo(x+bw,y,x+bw,y+r);
-      ctx.lineTo(x+bw,y+bh-r); ctx.quadraticCurveTo(x+bw,y+bh,x+bw-r,y+bh);
-      ctx.lineTo(x+r,y+bh); ctx.quadraticCurveTo(x,y+bh,x,y+bh-r);
-      ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y);
-      ctx.closePath(); ctx.fill(); ctx.stroke();
-
-      // Texto interno
-      ctx.fillStyle='#0f172a';
-      ctx.font='600 34px Inter, Arial';
-      let yy = y + 56; const lh = 44; const maxW = bw - 40; const xx = x + 20;
-      const linhas = [
-        `Tipo: ${tipo.value === 'Outros' ? (outroTexto.value.trim()||'(descrever)') : (tipo.value||'(sem tipo)')}`,
-        `Bloco/Setor: ${bloco.value||'-'}`,
-        `Pav/Unidade: ${pav.value||'-'}`,
-        `Local: ${localDet.value||'-'}`,
-        `Descrição:`,
-      ];
-      linhas.forEach(txt=>{ ctx.fillText(txt, xx, yy); yy += lh; });
-
-      ctx.font='400 30px Inter, Arial';
-      yy = wrapText(ctx, (desc.value.trim()||'-'), xx, yy, maxW, 40) + 26;
-
-      ctx.font='600 34px Inter, Arial';
-      const extra = [
-        `Ação solicitada: ${acao.value}`,
-        `Prioridade: ${prio.value}`,
-        `Prazo desejado: ${prazo.value? isoBrDate(prazo.value): '-'}`,
-        `Resp./Equipe: ${resp.value||'-'}`,
-        `Data/Hora (Brasília): ${nowBr()}`
-      ];
-      extra.forEach(t=>{ ctx.fillText(t, xx, yy); yy += lh; });
-
-      // Assinatura neutra (negrito + itálico)
-      ctx.font='italic 700 26px Inter, Arial'; ctx.fillStyle='#64748b';
-      ctx.fillText('— Registro para Gestão', P, H-90);
-
-      // Marca d'água leve
-      ctx.save(); ctx.translate(W-140, H-70); ctx.rotate(-Math.PI/12);
-      ctx.globalAlpha=0.08; ctx.fillStyle='#0ea5e9'; ctx.font='900 90px Inter, Arial'; ctx.fillText('SYSTEM', -200, 0);
-      ctx.restore();
-
-      // Gerar File
-      const blob = await new Promise(res=> canvas.toBlob(res, 'image/png', 0.92));
-      return new File([blob], `ocorrencia_${ref}.png`, {type:'image/png'});
+      const file = new File([blob], `foto_${ref}.jpg`, {type:'image/jpeg'});
+      extraFiles.push(file);
+      addThumbFromFile(file);
     }
+
+    btnOpenCam.addEventListener('click', openCam);
+    btnCloseCam.addEventListener('click', stopCam);
+    btnSnap.addEventListener('click', snapPhoto);
+
+    // ====== Lista adicional de arquivos (snapshots) ======
+    const extraFiles = [];
 
     // ====== Envio para WhatsApp ======
-    function openWhatsWithText(text, number){
-      const encoded = encodeURIComponent(text);
-      const num = (number||'').replace(/\D/g,'');
-      const base = num ? `https://wa.me/${num}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
-      window.open(base, '_blank');
-    }
+    function openWhatsWithText(text, number){ const encoded = encodeURIComponent(text); const num = (number||'').replace(/\D/g,''); const base = num ? `https://wa.me/${num}?text=${encoded}` : `https://wa.me/?text=${encoded}`; window.open(base, '_blank'); }
 
     async function shareWithFiles(text){
       const files = Array.from(midia.files||[]).slice(0,10);
-      const list = [...files];
-      if(chkCard.checked){
-        try{ const card = await buildCardFile(); list.unshift(card); }catch(e){ console.warn('Falha ao gerar card', e); }
-      }
+      const list = [...extraFiles, ...files];
+      if(chkCard.checked){ try{ const card = await buildCardFile(); list.unshift(card); }catch(e){ console.warn('Falha ao gerar card', e); }}
       if(list.length && navigator.canShare && navigator.canShare({ files: list })){
         try{ await navigator.share({ files: list, text, title: 'Ocorrência de obra' }); return true; }catch(e){ return false; }
       }
@@ -352,11 +312,11 @@
       updatePreview();
       const text = buildMessage();
 
-      // 1) Tenta Web Share (mobile) com arquivos (inclui card se ativado)
+      // 1) Tenta Web Share (mobile) com arquivos (inclui card/snapshots)
       const shared = await shareWithFiles(text);
-      if(shared) return;
+      if(shared){ stopCam(); return; }
 
-      // 2) Fallback: abre WhatsApp com texto e mostra o card para salvar manualmente (desktop)
+      // 2) Fallback desktop: abre WhatsApp (texto) e o card numa aba para salvar; snapshots já ficam nos thumbs
       if(chkCard.checked){
         try{
           const card = await buildCardFile();
