@@ -1,10 +1,11 @@
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Obra — Tarefas</title>
-  <meta name="description" content="App web offline para controle de tarefas de obra: status, responsável, fotos, bloqueios e relatórios." />
+  <meta name="description" content="App web offline para controle de tarefas de obra, com compartilhamento de fotos + relatório pelo Web Share API." />
   <meta name="theme-color" content="#0ea5e9" />
   <link rel="manifest" href="./manifest.webmanifest">
   <style>
@@ -45,7 +46,6 @@
     .thumbs img{width:70px;height:70px;border-radius:10px;border:2px solid var(--line);object-fit:cover}
 
     .muted{color:var(--muted);font-size:12px}
-
     footer{position:fixed;left:0;right:0;bottom:0;padding:8px 14px;text-align:center;font-size:11px;color:#556987;background:#ffffffcc;border-top:1px solid var(--line);backdrop-filter:saturate(140%) blur(6px)}
   </style>
 </head>
@@ -59,6 +59,7 @@
       <div class="controls">
         <button class="btn primary" id="btnAdd">+ Nova tarefa</button>
         <button class="btn" id="btnReport">Relatório do dia</button>
+        <button class="btn" id="btnSharePhotos">Compartilhar fotos + relatório</button>
         <button class="btn" id="btnExport">Exportar JSON</button>
         <input type="file" id="importFile" accept="application/json" hidden>
         <button class="btn" id="btnImport">Importar</button>
@@ -94,10 +95,10 @@
         <div class="card">
           <h2>Relatório</h2>
           <div class="muted">Texto simples para WhatsApp/Email.</div>
-          <textarea id="reportBox" placeholder="Clique em \"Relatório do dia\""></textarea>
+          <textarea id="reportBox" placeholder="Clique em &quot;Relatório do dia&quot;"></textarea>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
             <button class="btn" id="btnCopy">Copiar</button>
-            <button class="btn" id="btnShare">Compartilhar</button>
+            <button class="btn" id="btnShare">Compartilhar (texto)</button>
           </div>
           <hr style="border:none;border-top:2px solid var(--line);margin:12px 0">
           <h2>Bloqueios</h2>
@@ -143,7 +144,7 @@
 
   <script>
     /* ===================== Armazenamento ===================== */
-    const KEY='obra-app-v1';
+    const KEY='obra-app-v3';
     const db = { tasks: [], seq: 1 };
     const load=()=>{ try{ return JSON.parse(localStorage.getItem(KEY))||db }catch(_){ return db } };
     const save=(state)=>localStorage.setItem(KEY, JSON.stringify(state));
@@ -154,17 +155,23 @@
     const $$=sel=>Array.from(document.querySelectorAll(sel));
     const pad=n=>String(n).padStart(2,'0');
     const todayStr=()=>{const d=new Date();return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`};
+    const toDataUrlFile=(dataUrl, name='foto.jpg')=>{ const [hdr,b64]=dataUrl.split(','); const mime=(hdr.match(/data:(.*?);/)||[])[1]||'image/jpeg'; const bin=atob(b64); const len=bin.length; const bytes=new Uint8Array(len); for(let i=0;i<len;i++){bytes[i]=bin.charCodeAt(i)}; return new File([bytes], name, {type:mime}); };
 
     function uid(){ return 't'+(state.seq++) }
-
-    function photoFilesToDataURLs(files){
-      return Promise.all(Array.from(files).map(f=>new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.readAsDataURL(f) })))
-    }
+    function photoFilesToDataURLs(files){ return Promise.all(Array.from(files).map(f=>new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.readAsDataURL(f) })))}
 
     /* ===================== Render ===================== */
     const listEl = $('#list');
     const kpisEl = $('#kpis');
     const blocksEl = $('#blocks');
+
+    function currentFiltered(){
+      const disc = $('#filterDisc').value; const st = $('#filterStatus').value; const txt = $('#filterSearch').value.toLowerCase(); const dt = $('#filterDate').value;
+      return state.tasks.filter(t=>
+        (!disc || t.disc===disc) && (!st || t.status===st) && (!dt || (t.due && t.due<=dt)) &&
+        (!txt || (t.title.toLowerCase().includes(txt) || (t.owner||'').toLowerCase().includes(txt)))
+      ).sort((a,b)=> (a.due||'9999').localeCompare(b.due||'9999'));
+    }
 
     function kpis(){
       const total = state.tasks.length;
@@ -180,11 +187,7 @@
 
     function render(){
       kpis();
-      const disc = $('#filterDisc').value; const st = $('#filterStatus').value; const txt = $('#filterSearch').value.toLowerCase(); const dt = $('#filterDate').value;
-      const tasks = state.tasks.filter(t=>
-        (!disc || t.disc===disc) && (!st || t.status===st) && (!dt || (t.due && t.due<=dt)) &&
-        (!txt || (t.title.toLowerCase().includes(txt) || (t.owner||'').toLowerCase().includes(txt)))
-      ).sort((a,b)=> (a.due||'9999').localeCompare(b.due||'9999'));
+      const tasks = currentFiltered();
       listEl.innerHTML='';
       tasks.forEach(t=>{
         const row=document.createElement('div'); row.className='task';
@@ -193,7 +196,8 @@
         const mid = document.createElement('div');
         const due = t.due? `• prazo: ${t.due}`:'';
         const own = t.owner? `• resp.: ${t.owner}`:'';
-        mid.innerHTML = `<b>${t.title}</b><div class="muted">${t.disc} ${due} ${own} • ${t.progress||0}%</div>`;
+        const pics = (t.photos||[]).length?` • 📷 ${t.photos.length}`:'';
+        mid.innerHTML = `<b>${t.title}</b><div class="muted">${t.disc} ${due} ${own} • ${t.progress||0}%${pics}</div>`;
         const right = document.createElement('div'); right.style.display='grid'; right.style.gap='6px'; right.style.justifyItems='end';
         const bEdit = document.createElement('button'); bEdit.className='btn'; bEdit.textContent='Editar'; bEdit.onclick=()=>openEdit(t.id);
         const bDone = document.createElement('button'); bDone.className='btn'; bDone.textContent=t.status==='done'?'↺ Reabrir':'✓ Concluir'; bDone.onclick=()=>{ t.status = t.status==='done'?'doing':'done'; save(state); render(); };
@@ -235,24 +239,46 @@
 
     $('#btnAdd').onclick=openNew;
 
-    function report(){
+    function report(tasks){
       const d=new Date(); const head=`Relatório — ${d.toLocaleDateString()}\n`+"-".repeat(18)+"\n";
-      const parts = state.tasks.map(t=>{
+      const parts = tasks.map(t=>{
         const p1 = `• ${t.title} [${t.disc}] — ${t.progress||0}% — ${t.status}`;
         const p2 = [t.owner?`resp.: ${t.owner}`:'', t.due?`prazo: ${t.due}`:''].filter(Boolean).join(' | ');
         const p3 = t.block?`\n  BLOQUEIO: ${t.block}`:'';
-        return p1 + (p2?`\n  ${p2}`:'') + (t.notes?`\n  notas: ${t.notes}`:'') + p3;
+        const p4 = (t.photos||[]).length?`\n  fotos: ${t.photos.length}`:'';
+        return p1 + (p2?`\n  ${p2}`:'') + (t.notes?`\n  notas: ${t.notes}`:'') + p3 + p4;
       }).join('\n');
       return head+parts;
     }
 
-    $('#btnReport').onclick=()=>{ $('#reportBox').value=report(); };
+    $('#btnReport').onclick=()=>{ $('#reportBox').value=report(currentFiltered()); };
     $('#btnCopy').onclick=()=>{ const ta=$('#reportBox'); ta.select(); document.execCommand('copy'); };
     $('#btnShare').onclick=async()=>{
-      const text = $('#reportBox').value || report();
+      const text = $('#reportBox').value || report(currentFiltered());
       if(navigator.share){ try{ await navigator.share({text}); }catch(_){} }
       else{ $('#reportBox').value=text; alert('Relatório pronto. Copie e cole.'); }
     };
+
+    // === Compartilhar fotos + relatório (Web Share API Level 2) ===
+    async function shareWithPhotos(){
+      const tasks = currentFiltered();
+      const text = report(tasks);
+      const photos = tasks.flatMap(t=> (t.photos||[]));
+      if(!photos.length){ alert('Não há fotos nas tarefas filtradas.'); return; }
+      const MAX = 20; // limite de segurança
+      const files = photos.slice(0, MAX).map((d,i)=> toDataUrlFile(d, `obra_${i+1}.jpg`));
+      if(navigator.canShare && navigator.canShare({files})){
+        try{ await navigator.share({ files, text, title: 'Relatório da obra' }); }
+        catch(e){ /* cancelado */ }
+      }else{
+        const w = window.open('', '_blank');
+        const imgs = photos.map(src=>`<img src="${src}" style="max-width:140px;margin:6px;border:1px solid #ddd;border-radius:8px">`).join('');
+        w.document.write(`<pre>${text.replace(/</g,'&lt;')}</pre><div>${imgs}</div>`);
+        w.document.close();
+        alert('Seu navegador não suporta compartilhamento de arquivos. Abri uma página com o relatório e as fotos.');
+      }
+    }
+    $('#btnSharePhotos').onclick = shareWithPhotos;
 
     $('#btnExport').onclick=()=>{ const a=document.createElement('a'); const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); a.href=URL.createObjectURL(blob); a.download='obra-dados.json'; a.click(); };
     $('#btnImport').onclick=()=> $('#importFile').click();
