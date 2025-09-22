@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Obra — Tarefas</title>
-  <meta name="description" content="Controle de tarefas de obra com fotos, relatório, compartilhamento e exclusão, agora com armazenamento de fotos em IndexedDB para evitar QuotaExceededError." />
+  <meta name="description" content="Controle de tarefas de obra com fotos, relatório, compartilhamento e exclusão, com fotos em IndexedDB e envio formatado para WhatsApp." />
   <meta name="theme-color" content="#0ea5e9" />
   <link rel="manifest" href="./manifest.webmanifest">
   <style>
@@ -63,6 +63,8 @@
         <button class="btn primary" id="btnAdd">+ Nova</button>
         <button class="btn" id="btnReport">Relatório</button>
         <button class="btn" id="btnSharePhotos">Fotos + relatório</button>
+        <button class="btn" id="btnWA1">WhatsApp — 1 foto/atividade</button>
+        <button class="btn" id="btnWATodas">WhatsApp — todas por atividade</button>
         <button class="btn" id="btnExport">Exportar</button>
         <input type="file" id="importFile" accept="application/json" hidden>
         <button class="btn" id="btnImport">Importar</button>
@@ -147,14 +149,14 @@
   </footer>
 
   <script>
-    /* ===================== Armazenamento base ===================== */
+    // ================== Armazenamento base (localStorage: só metadados) ==================
     const KEY='obra-app-final';
     const dbMem = { tasks: [], seq: 1 };
     const load=()=>{ try{ return JSON.parse(localStorage.getItem(KEY))||dbMem }catch(_){ return dbMem } };
-    const save=(state)=>{ try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){ if(e && (e.name==='QuotaExceededError' || e.code===22)){ alert('Armazenamento local cheio. Dica: exporte os dados e limpe fotos antigas. A partir desta versão, novas fotos ficam no armazenamento interno do app (IndexedDB).'); } else { console.error(e); } } };
+    const save=(state)=>{ try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){ if(e && (e.name==='QuotaExceededError' || e.code===22)){ alert('Armazenamento local cheio. Exporte os dados e limpe fotos antigas. As fotos novas ficam no IndexedDB.'); } else { console.error(e); } } };
     let state = load();
 
-    /* ===================== IndexedDB (fotos) ===================== */
+    // ================== IndexedDB (fotos) ==================
     let _dbp=null;
     function getDB(){
       if(_dbp) return _dbp;
@@ -170,294 +172,369 @@
     async function photoGet(id){ const db=await getDB(); return new Promise((res,rej)=>{ const tx=db.transaction('photos','readonly'); const r=tx.objectStore('photos').get(id); r.onsuccess=()=>res(r.result||null); r.onerror=()=>rej(r.error); }); }
     async function photoDel(id){ const db=await getDB(); return new Promise((res,rej)=>{ const tx=db.transaction('photos','readwrite'); tx.objectStore('photos').delete(id); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); }); }
 
-    /* ===================== Utilidades ===================== */
-    const $=sel=>document.querySelector(sel);
-    const $$=sel=>Array.from(document.querySelectorAll(sel));
-    const pad=n=>String(n).padStart(2,'0');
-    const todayStr=()=>{const d=new Date();return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`};
-    // Mantemos esta função para o compartilhamento (transformar DataURL em File quando necessário)
-    const toDataUrlFile=(dataUrl, name='foto.jpg')=>{ const [hdr,b64]=dataUrl.split(','); const mime=(hdr.match(/data:(.*?);/)||[])[1]||'image/jpeg'; const bin=atob(b64||''); const len=bin.length; const bytes=new Uint8Array(len); for(let i=0;i<len;i++){bytes[i]=bin.charCodeAt(i)}; return new File([bytes], name, {type:mime}); };
+    document.addEventListener('DOMContentLoaded', ()=>{
+      /* ===================== Utilidades DOM ===================== */
+      const $=sel=>document.querySelector(sel);
+      const $$=sel=>Array.from(document.querySelectorAll(sel));
+      const bind=(sel,ev,fn)=>{ const el=$(sel); if(el) el.addEventListener(ev,fn); else console.warn('[bind] elemento não encontrado:', sel); };
+      const pad=n=>String(n).padStart(2,'0');
+      const todayStr=()=>{const d=new Date();return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`};
+      const progValEl = document.getElementById('progVal');
 
-    function uid(){ return 't'+(state.seq++) }
+      function uid(){ return 't'+(state.seq++) }
 
-    // Compressão de imagem p/ economizar espaço (máx. 1600px, JPEG 0.75)
-    async function compressImage(file, max=1600, quality=0.75){
-      const img = document.createElement('img');
-      const url = URL.createObjectURL(file);
-      await new Promise((res,rej)=>{ img.onload=()=>res(); img.onerror=rej; img.src=url; });
-      let w=img.naturalWidth, h=img.naturalHeight;
-      if(w>h){ if(w>max){ h=Math.round(h*max/w); w=max; } }
-      else { if(h>max){ w=Math.round(w*max/h); h=max; } }
-      const canvas=document.createElement('canvas'); canvas.width=w; canvas.height=h;
-      const ctx=canvas.getContext('2d'); ctx.drawImage(img,0,0,w,h);
-      const blob = await new Promise(res=> canvas.toBlob(res, 'image/jpeg', quality));
-      URL.revokeObjectURL(url);
-      return blob || file;
-    }
+      // Compressão de imagem (máx. 1600px, JPEG 0.75)
+      async function compressImage(file, max=1600, quality=0.75){
+        const img = document.createElement('img');
+        const url = URL.createObjectURL(file);
+        await new Promise((res,rej)=>{ img.onload=()=>res(); img.onerror=rej; img.src=url; });
+        let w=img.naturalWidth, h=img.naturalHeight;
+        if(w>h){ if(w>max){ h=Math.round(h*max/w); w=max; } }
+        else { if(h>max){ w=Math.round(w*max/h); h=max; } }
+        const canvas=document.createElement('canvas'); canvas.width=w; canvas.height=h;
+        const ctx=canvas.getContext('2d'); ctx.drawImage(img,0,0,w,h);
+        const blob = await new Promise(res=> canvas.toBlob(res, 'image/jpeg', quality));
+        URL.revokeObjectURL(url);
+        return blob || file;
+      }
 
-    /* ========== Render ========= */
-    const listEl = $('#list');
-    const kpisEl = $('#kpis');
-    const blocksEl = $('#blocks');
+      /* ========== Render ========= */
+      const listEl = $('#list');
+      const kpisEl = $('#kpis');
+      const blocksEl = $('#blocks');
 
-    function currentFiltered(){
-      const disc = $('#filterDisc').value; const st = $('#filterStatus').value; const txt = $('#filterSearch').value.toLowerCase(); const dt = $('#filterDate').value;
-      return state.tasks.filter(t=>
-        (!disc || t.disc===disc) && (!st || t.status===st) && (!dt || (t.due && t.due<=dt)) &&
-        (!txt || (t.title.toLowerCase().includes(txt) || (t.owner||'').toLowerCase().includes(txt)))
-      ).sort((a,b)=> (a.due||'9999').localeCompare(b.due||'9999'));
-    }
+      function currentFiltered(){
+        const disc = $('#filterDisc').value; const st = $('#filterStatus').value; const txt = $('#filterSearch').value.toLowerCase(); const dt = $('#filterDate').value;
+        return state.tasks.filter(t=>
+          (!disc || t.disc===disc) && (!st || t.status===st) && (!dt || (t.due && t.due<=dt)) &&
+          (!txt || (t.title.toLowerCase().includes(txt) || (t.owner||'').toLowerCase().includes(txt)))
+        ).sort((a,b)=> (a.due||'9999').localeCompare(b.due||'9999'));
+      }
 
-    function kpis(){
-      const total = state.tasks.length;
-      const done = state.tasks.filter(t=>t.status==='done').length;
-      const doing = state.tasks.filter(t=>t.status==='doing').length;
-      kpisEl.innerHTML = `
-        <div class="kpi"><div>Total</div><b>${total}</b></div>
-        <div class="kpi"><div>Concluídas</div><b>${done}</b></div>
-        <div class="kpi"><div>Execução</div><b>${doing}</b></div>`;
-      const bs = state.tasks.filter(t=>t.block && !t.block_done).map(t=>`<li>• <b>${t.title}</b> — ${t.block}</li>`);
-      blocksEl.innerHTML = bs.join('') || '<li>—</li>';
-    }
+      function kpis(){
+        const total = state.tasks.length;
+        const done = state.tasks.filter(t=>t.status==='done').length;
+        const doing = state.tasks.filter(t=>t.status==='doing').length;
+        kpisEl.innerHTML = `
+          <div class="kpi"><div>Total</div><b>${total}</b></div>
+          <div class="kpi"><div>Concluídas</div><b>${done}</b></div>
+          <div class="kpi"><div>Execução</div><b>${doing}</b></div>`;
+        const bs = state.tasks.filter(t=>t.block && !t.block_done).map(t=>`<li>• <b>${t.title}</b> — ${t.block}</li>`);
+        blocksEl.innerHTML = bs.join('') || '<li>—</li>';
+      }
 
-    function render(){
-      kpis();
-      const tasks = currentFiltered();
-      listEl.innerHTML='';
-      tasks.forEach(t=>{
-        const row=document.createElement('div'); row.className='task';
-        const stClass = t.status==='done'?'st-done': t.status==='doing'?'st-doing':'st-todo';
-        const left = document.createElement('div'); left.innerHTML = `<div class="status ${stClass}">${t.status==='done'?'Concluída':t.status==='doing'?'Em execução':'A fazer'}</div>`;
-        const mid = document.createElement('div');
-        const due = t.due? `• ${t.due}`:'';
-        const own = t.owner? `• ${t.owner}`:'';
-        const photoCount = (t.photoIds? t.photoIds.length : (t.photos? t.photos.length : 0));
-        const pics = photoCount?` • 📷 ${photoCount}`:'';
-        mid.innerHTML = `<b>${t.title}</b><div class="muted">${t.disc} ${due} ${own} • ${t.progress||0}%${pics}</div>`;
-        const right = document.createElement('div'); right.style.display='grid'; right.style.gap='6px'; right.style.justifyItems='end';
-        const bEdit = document.createElement('button'); bEdit.className='btn'; bEdit.textContent='Editar'; bEdit.onclick=()=>openEdit(t.id);
-        const bDone = document.createElement('button'); bDone.className='btn'; bDone.textContent=t.status==='done'?'↺ Reabrir':'✓ Concluir'; bDone.onclick=()=>{ t.status = t.status==='done'?'doing':'done'; save(state); render(); };
-        const bDel  = document.createElement('button'); bDel.className='btn danger icon'; bDel.title='Excluir'; bDel.textContent='🗑️'; bDel.onclick=()=>deleteTask(t.id);
-        right.append(bEdit,bDone,bDel);
-        row.append(left, mid, right);
-        listEl.appendChild(row);
+      function render(){
+        kpis();
+        const tasks = currentFiltered();
+        listEl.innerHTML='';
+        tasks.forEach(t=>{
+          const row=document.createElement('div'); row.className='task';
+          const stClass = t.status==='done'?'st-done': t.status==='doing'?'st-doing':'st-todo';
+          const left = document.createElement('div'); left.innerHTML = `<div class="status ${stClass}">${t.status==='done'?'Concluída':t.status==='doing'?'Em execução':'A fazer'}</div>`;
+          const mid = document.createElement('div');
+          const due = t.due? `• ${t.due}`:'';
+          const own = t.owner? `• ${t.owner}`:'';
+          const photoCount = (t.photoIds? t.photoIds.length : (t.photos? t.photos.length : 0));
+          const pics = photoCount?` • 📷 ${photoCount}`:'';
+          mid.innerHTML = `<b>${t.title}</b><div class="muted">${t.disc} ${due} ${own} • ${t.progress||0}%${pics}</div>`;
+          const right = document.createElement('div'); right.style.display='grid'; right.style.gap='6px'; right.style.justifyItems='end';
+          const bEdit = document.createElement('button'); bEdit.className='btn'; bEdit.textContent='Editar'; bEdit.onclick=()=>openEdit(t.id);
+          const bDone = document.createElement('button'); bDone.className='btn'; bDone.textContent=t.status==='done'?'↺ Reabrir':'✓ Concluir'; bDone.onclick=()=>{ t.status = t.status==='done'?'doing':'done'; save(state); render(); };
+          const bDel  = document.createElement('button'); bDel.className='btn danger icon'; bDel.title='Excluir'; bDel.textContent='🗑️'; bDel.onclick=()=>deleteTask(t.id);
+          right.append(bEdit,bDone,bDel);
+          row.append(left, mid, right);
+          listEl.appendChild(row);
+        });
+      }
+
+      /* ========== Helpers de Foto no formulário ========= */
+      const fThumbs=$('#fThumbs');
+      let originalPhotoIds=[];           // fotoIds originais (ao abrir o modal)
+      let removedPhotoIds=[];            // ids removidos (originais) para deletar no salvar
+      let sessionNewPhotoIds=[];         // ids adicionados nesta sessão (deletar no cancelar se necessário)
+
+      function makeThumb(url, id){
+        const wrap=document.createElement('div');
+        wrap.className='thumb';
+        wrap.dataset.id=id;
+        wrap.innerHTML=`<img src="${url}"><button class="rm" title="Remover foto" type="button">×</button>`;
+        fThumbs.appendChild(wrap);
+      }
+      async function addThumbFromId(id){
+        const blob = await photoGet(id); if(!blob) return;
+        const url = URL.createObjectURL(blob);
+        makeThumb(url, id);
+      }
+      function loadThumbs(ids){ fThumbs.innerHTML=''; ids.forEach(id=>{ addThumbFromId(id); }); }
+
+      fThumbs.addEventListener('click', async (e)=>{
+        const btn=e.target.closest('button.rm'); if(!btn) return;
+        const wrap = btn.parentElement; const id = wrap.dataset.id;
+        // se for nova nesta sessão, já apagamos do banco
+        if(sessionNewPhotoIds.includes(id)){
+          try{ await photoDel(id); }catch(_){ }
+          sessionNewPhotoIds = sessionNewPhotoIds.filter(x=>x!==id);
+        } else {
+          if(!removedPhotoIds.includes(id)) removedPhotoIds.push(id);
+        }
+        // remove visualmente
+        const img = wrap.querySelector('img'); if(img && img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+        wrap.remove();
       });
-    }
 
-    /* ========== Helpers de Foto no formulário ========= */
-    const fThumbs=$('#fThumbs');
-    let originalPhotoIds=[];           // fotoIds originais (ao abrir o modal)
-    let removedPhotoIds=[];            // ids removidos (originais) para deletar no salvar
-    let sessionNewPhotoIds=[];         // ids adicionados nesta sessão (deletar no cancelar se necessário)
+      // Seleção de novas fotos -> comprime -> salva no IDB -> cria thumb
+      const fFotos=$('#fFotos');
+      fFotos.addEventListener('change', async (e)=>{
+        const files = Array.from(e.target.files||[]);
+        for(const file of files){
+          try{
+            const blob = await compressImage(file, 1600, 0.75);
+            const id = await photoPut(blob);
+            sessionNewPhotoIds.push(id);
+            await addThumbFromId(id);
+          }catch(err){ console.error('Falha ao processar foto', err); }
+        }
+        // limpa input para não reprocessar
+        fFotos.value='';
+      });
 
-    function makeThumb(url, id){
-      const wrap=document.createElement('div');
-      wrap.className='thumb';
-      wrap.dataset.id=id;
-      wrap.innerHTML=`<img src="${url}"><button class="rm" title="Remover foto" type="button">×</button>`;
-      fThumbs.appendChild(wrap);
-    }
-    async function addThumbFromId(id){
-      const blob = await photoGet(id); if(!blob) return;
-      const url = URL.createObjectURL(blob);
-      makeThumb(url, id);
-    }
-    function loadThumbs(ids){ fThumbs.innerHTML=''; ids.forEach(id=>{ addThumbFromId(id); }); }
+      function getThumbIds(){ return Array.from(fThumbs.querySelectorAll('.thumb')).map(w=>w.dataset.id); }
 
-    fThumbs.addEventListener('click', async (e)=>{
-      const btn=e.target.closest('button.rm'); if(!btn) return;
-      const wrap = btn.parentElement; const id = wrap.dataset.id;
-      // se for nova nesta sessão, já apagamos do banco
-      if(sessionNewPhotoIds.includes(id)){
-        try{ await photoDel(id); }catch(_){ }
-        sessionNewPhotoIds = sessionNewPhotoIds.filter(x=>x!==id);
-      } else {
-        if(!removedPhotoIds.includes(id)) removedPhotoIds.push(id);
+      /* ========== CRUD ========= */
+      const dlg = $('#dlg');
+      const form = $('#taskForm');
+      const fTitulo=$('#fTitulo'), fDisc=$('#fDisc'), fResp=$('#fResp'), fPrazo=$('#fPrazo'), fProg=$('#fProg'), fStatus=$('#fStatus'), fNotas=$('#fNotas'), fBlock=$('#fBlock');
+      const btnDeleteTask=$('#btnDeleteTask');
+      let editingId=null;
+
+      function resetForm(){
+        editingId=null; $('#dlgTitle').textContent='Nova tarefa';
+        fTitulo.value=''; fDisc.value='Elétrica'; fResp.value=''; fPrazo.value=''; fProg.value=0; if(progValEl) progValEl.textContent=0; fStatus.value='todo'; fNotas.value=''; fBlock.value='';
+        originalPhotoIds=[]; removedPhotoIds=[]; sessionNewPhotoIds=[]; fThumbs.innerHTML='';
+        btnDeleteTask.style.display='none';
       }
-      // remove visualmente
-      const img = wrap.querySelector('img'); if(img && img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
-      wrap.remove();
-    });
 
-    // Seleção de novas fotos -> comprime -> salva no IDB -> cria thumb
-    const fFotos=$('#fFotos');
-    fFotos.addEventListener('change', async (e)=>{
-      const files = Array.from(e.target.files||[]);
-      for(const file of files){
-        try{
-          const blob = await compressImage(file, 1600, 0.75);
-          const id = await photoPut(blob);
-          sessionNewPhotoIds.push(id);
-          await addThumbFromId(id);
-        }catch(err){ console.error('Falha ao processar foto', err); }
+      function openNew(){ resetForm(); dlg.showModal(); }
+
+      function openEdit(id){
+        const t = state.tasks.find(x=>x.id===id); if(!t) return;
+        editingId=id; $('#dlgTitle').textContent='Editar tarefa'; fTitulo.value=t.title; fDisc.value=t.disc; fResp.value=t.owner||''; fPrazo.value=t.due||''; fProg.value=t.progress||0; if(progValEl) progValEl.textContent=fProg.value; fStatus.value=t.status; fNotas.value=t.notes||''; fBlock.value=t.block||'';
+        originalPhotoIds = Array.isArray(t.photoIds)? [...t.photoIds] : [];
+        removedPhotoIds=[]; sessionNewPhotoIds=[]; loadThumbs(originalPhotoIds);
+        btnDeleteTask.style.display='inline-flex'; dlg.showModal();
       }
-      // limpa input para não reprocessar
-      fFotos.value='';
-    });
 
-    function getThumbIds(){ return Array.from(fThumbs.querySelectorAll('.thumb')).map(w=>w.dataset.id); }
-
-    /* ========== CRUD ========= */
-    const dlg = $('#dlg');
-    const form = $('#taskForm');
-    const fTitulo=$('#fTitulo'), fDisc=$('#fDisc'), fResp=$('#fResp'), fPrazo=$('#fPrazo'), fProg=$('#fProg'), fStatus=$('#fStatus'), fNotas=$('#fNotas'), fBlock=$('#fBlock');
-    const btnDeleteTask=$('#btnDeleteTask');
-    let editingId=null;
-
-    function resetForm(){
-      editingId=null; $('#dlgTitle').textContent='Nova tarefa';
-      fTitulo.value=''; fDisc.value='Elétrica'; fResp.value=''; fPrazo.value=''; fProg.value=0; progVal.textContent=0; fStatus.value='todo'; fNotas.value=''; fBlock.value='';
-      originalPhotoIds=[]; removedPhotoIds=[]; sessionNewPhotoIds=[]; fThumbs.innerHTML='';
-      btnDeleteTask.style.display='none';
-    }
-
-    function openNew(){ resetForm(); dlg.showModal(); }
-
-    function openEdit(id){
-      const t = state.tasks.find(x=>x.id===id); if(!t) return;
-      editingId=id; $('#dlgTitle').textContent='Editar tarefa'; fTitulo.value=t.title; fDisc.value=t.disc; fResp.value=t.owner||''; fPrazo.value=t.due||''; fProg.value=t.progress||0; progVal.textContent=fProg.value; fStatus.value=t.status; fNotas.value=t.notes||''; fBlock.value=t.block||'';
-      originalPhotoIds = Array.isArray(t.photoIds)? [...t.photoIds] : [];
-      removedPhotoIds=[]; sessionNewPhotoIds=[]; loadThumbs(originalPhotoIds);
-      btnDeleteTask.style.display='inline-flex'; dlg.showModal();
-    }
-
-    async function deleteTask(id){
-      if(!confirm('Excluir esta tarefa? Esta ação não pode ser desfeita.')) return;
-      const i=state.tasks.findIndex(t=>t.id===id);
-      if(i>-1){
-        const t=state.tasks[i];
-        // apaga fotos vinculadas
-        for(const pid of (t.photoIds||[])){ try{ await photoDel(pid); }catch(_){} }
-        state.tasks.splice(i,1); save(state); render();
+      async function deleteTask(id){
+        if(!confirm('Excluir esta tarefa? Esta ação não pode ser desfeita.')) return;
+        const i=state.tasks.findIndex(t=>t.id===id);
+        if(i>-1){
+          const t=state.tasks[i];
+          for(const pid of (t.photoIds||[])){ try{ await photoDel(pid); }catch(_){} }
+          state.tasks.splice(i,1); save(state); render();
+        }
+        if(dlg.open && editingId===id){ dlg.close(); }
       }
-      if(dlg.open && editingId===id){ dlg.close(); }
-    }
 
-    btnDeleteTask.addEventListener('click',()=>{ if(editingId) deleteTask(editingId); });
+      bind('#btnDeleteTask','click',()=>{ if(editingId) deleteTask(editingId); });
 
-    // Cancelar: apaga fotos novas que não foram salvas
-    $('#btnCancel').addEventListener('click', async ()=>{
-      for(const id of sessionNewPhotoIds){ try{ await photoDel(id); }catch(_){} }
-      dlg.close();
-    });
+      // Cancelar: apaga fotos novas que não foram salvas
+      bind('#btnCancel','click', async ()=>{
+        for(const id of sessionNewPhotoIds){ try{ await photoDel(id); }catch(_){} }
+        dlg.close();
+      });
 
-    // SUBMIT do formulário
-    form.addEventListener('submit', async (e)=>{
-      e.preventDefault();
-      const finalIds = getThumbIds();
-      // remove do banco as fotos antigas que foram tiradas do formulário
-      for(const id of removedPhotoIds){ if(!finalIds.includes(id)){ try{ await photoDel(id); }catch(_){} } }
-      const obj = { id: editingId||uid(), title:fTitulo.value.trim(), disc:fDisc.value, owner:fResp.value.trim(), due:fPrazo.value||null, progress:+fProg.value, status:fStatus.value, notes:fNotas.value.trim(), block:fBlock.value.trim(), block_done:false, photoIds: finalIds };
-      if(!obj.title){ alert('Título obrigatório'); return; }
-      if(editingId){ const i=state.tasks.findIndex(t=>t.id===editingId); state.tasks[i]=obj; }
-      else{ state.tasks.push(obj); }
-      save(state); dlg.close(); render();
-    });
+      // SUBMIT do formulário
+      form.addEventListener('submit', async (e)=>{
+        e.preventDefault();
+        const finalIds = getThumbIds();
+        for(const id of removedPhotoIds){ if(!finalIds.includes(id)){ try{ await photoDel(id); }catch(_){} } }
+        const obj = { id: editingId||uid(), title:fTitulo.value.trim(), disc:fDisc.value, owner:fResp.value.trim(), due:fPrazo.value||null, progress:+fProg.value, status:fStatus.value, notes:fNotas.value.trim(), block:fBlock.value.trim(), block_done:false, photoIds: finalIds };
+        if(!obj.title){ alert('Título obrigatório'); return; }
+        if(editingId){ const i=state.tasks.findIndex(t=>t.id===editingId); state.tasks[i]=obj; }
+        else{ state.tasks.push(obj); }
+        save(state); dlg.close(); render();
+      });
 
-    $('#btnAdd').onclick=openNew;
+      bind('#btnAdd','click', openNew);
 
-    /* ========== Filtros, relatório e I/O ========= */
-    $$('#filterDisc, #filterStatus, #filterDate').forEach(el=> el.addEventListener('change', render));
-    $('#filterSearch').addEventListener('input', render);
+      /* ========== Filtros, relatório e I/O ========= */
+      $$('#filterDisc, #filterStatus, #filterDate').forEach(el=> el.addEventListener('change', render));
+      bind('#filterSearch','input', render);
 
-    function report(tasks){
-      const d=new Date(); const head=`Relatório — ${d.toLocaleDateString()}\n`+"-".repeat(18)+"\n";
-      const parts = tasks.map(t=>{
-        const p1 = `• ${t.title} [${t.disc}] — ${t.progress||0}% — ${t.status}`;
+      function waTaskHeader(t){
         const p2 = [t.owner||'', t.due||''].filter(Boolean).join(' | ');
-        const p3 = t.block?`\n  BLOQUEIO: ${t.block}`:'';
-        const cnt = (t.photoIds? t.photoIds.length : (t.photos? t.photos.length : 0));
-        const p4 = cnt?`\n  fotos: ${cnt}`:'';
-        return p1 + (p2?`\n  ${p2}`:'') + (t.notes?`\n  notas: ${t.notes}`:'') + p3 + p4;
-      }).join('\n');
-      return head+parts;
-    }
-
-    $('#btnReport').onclick=()=>{ $('#reportBox').value=report(currentFiltered()); };
-    $('#btnCopy').onclick=()=>{ const ta=$('#reportBox'); ta.select(); document.execCommand('copy'); };
-    $('#btnShare').onclick=async()=>{
-      const text = $('#reportBox').value || report(currentFiltered());
-      if(navigator.share){ try{ await navigator.share({text}); }catch(_){} }
-      else{ $('#reportBox').value=text; alert('Relatório pronto. Copie e cole.'); }
-    };
-
-    async function shareWithPhotos(){
-      const tasks = currentFiltered();
-      const text = report(tasks);
-      let ids = tasks.flatMap(t=> (t.photoIds||[]));
-      if(!ids.length){ alert('Sem fotos nas tarefas filtradas.'); return; }
-      const MAX = 20; ids = ids.slice(0, MAX);
-      const files = [];
-      for(let i=0;i<ids.length;i++){
-        const blob = await photoGet(ids[i]);
-        if(blob){ files.push(new File([blob], `obra_${i+1}.jpg`, {type: blob.type || 'image/jpeg'})); }
+        const base = `*${t.title}* — _${t.disc}_ (${t.progress||0}%, ${t.status})`;
+        return p2 ? `${base}\n${p2}` : base;
       }
-      if(navigator.canShare && navigator.canShare({files})){
-        try{ await navigator.share({ files, text, title: 'Relatório da obra' }); }catch(e){}
-      }else{
-        const w = window.open('', '_blank');
-        const imgsHtml = await (async()=>{
-          const arr=[]; for(const id of ids){ const blob=await photoGet(id); if(blob){ const u=URL.createObjectURL(blob); arr.push(`<img src="${u}" style="max-width:140px;margin:6px;border:1px solid #ddd;border-radius:8px">`); } } return arr.join(''); })();
-        w.document.write(`<pre>${text.replace(/</g,'&lt;')}</pre><div>${imgsHtml}</div>`);
-        w.document.close();
+
+      function report(tasks){
+        const d=new Date();
+        const head = `*Relatório da Obra — ${d.toLocaleDateString()}*\n${"-".repeat(24)}`;
+        const parts = tasks.map(t=>{
+          const h = waTaskHeader(t);
+          const blk = t.block?`\n🚧 *Bloqueio:* ${t.block}`:'';
+          const notes = t.notes?`\n📝 ${t.notes}`:'';
+          const cnt = (t.photoIds? t.photoIds.length : 0);
+          const fotos = cnt?`\n📷 ${cnt} foto${cnt>1?'s':''}`:'';
+          return `• ${h}${notes}${blk}${fotos}`;
+        }).join('\n\n');
+        return `${head}\n\n${parts}`;
       }
-    }
-    $('#btnSharePhotos').onclick = shareWithPhotos;
 
-    $('#btnExport').onclick=()=>{ const a=document.createElement('a'); const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); a.href=URL.createObjectURL(blob); a.download='obra-dados.json'; a.click(); };
-    $('#btnImport').onclick=()=> $('#importFile').click();
-    $('#importFile').addEventListener('change', async (e)=>{ const f=e.target.files?.[0]; if(!f) return; const txt=await f.text(); try{ const obj=JSON.parse(txt); if(obj && Array.isArray(obj.tasks)){
-          // migra fotos base64 para IndexedDB no ato da importação
-          for(const t of obj.tasks){
-            if(Array.isArray(t.photos) && t.photos.length){
-              t.photoIds = [];
-              for(const dataUrl of t.photos){
-                try{ const resp = await fetch(dataUrl); const blob = await resp.blob(); const id = await photoPut(blob); t.photoIds.push(id); }catch(_){}
-              }
-              delete t.photos;
-            }
-          }
-          state=obj; save(state); render();
-        } }
-      catch(_){ alert('JSON inválido'); } });
+      bind('#btnReport','click', ()=>{ $('#reportBox').value=report(currentFiltered()); });
+      bind('#btnCopy','click', ()=>{ const ta=$('#reportBox'); ta.select(); document.execCommand('copy'); });
+      bind('#btnShare','click', async ()=>{
+        const text = $('#reportBox').value || report(currentFiltered());
+        if(navigator.share){ try{ await navigator.share({text}); }catch(_){} }
+        else{ $('#reportBox').value=text; alert('Relatório pronto. Copie e cole.'); }
+      });
 
-    /* ========== Migração 1x: move fotos antigas (base64 no localStorage) para IndexedDB ========= */
-    (async function migrateIfNeeded(){
-      let changed=false;
-      for(const t of state.tasks){
-        if(Array.isArray(t.photos) && t.photos.length){
-          t.photoIds = t.photoIds||[];
-          for(const dataUrl of t.photos){ try{ const resp=await fetch(dataUrl); const blob=await resp.blob(); const id=await photoPut(blob); t.photoIds.push(id); }catch(_){} }
-          delete t.photos; changed=true;
+      async function shareWithPhotos(){
+        const tasks = currentFiltered();
+        const text = report(tasks);
+        let ids = tasks.flatMap(t=> (t.photoIds||[]));
+        if(!ids.length){ alert('Sem fotos nas tarefas filtradas.'); return; }
+        const MAX = 20; ids = ids.slice(0, MAX);
+        const files = [];
+        for(let i=0;i<ids.length;i++){
+          const blob = await photoGet(ids[i]);
+          if(blob){ files.push(new File([blob], `obra_${i+1}.jpg`, {type: blob.type || 'image/jpeg'})); }
+        }
+        if(navigator.canShare && navigator.canShare({files})){
+          try{ await navigator.share({ files, text, title: 'Relatório da obra' }); }catch(e){}
+        }else{
+          const w = window.open('', '_blank');
+          const imgsHtml = await (async()=>{
+            const arr=[]; for(const id of ids){ const blob=await photoGet(id); if(blob){ const u=URL.createObjectURL(blob); arr.push(`<img src="${u}" style="max-width:140px;margin:6px;border:1px solid #ddd;border-radius:8px">`); } } return arr.join(''); })();
+          w.document.write(`<pre>${text.replace(/</g,'&lt;')}</pre><div>${imgsHtml}</div>`);
+          w.document.close();
         }
       }
-      if(changed) save(state);
-    })();
+      bind('#btnSharePhotos','click', shareWithPhotos);
 
-    /* ========== Boot ========= */
-    render();
+      // === Imagens rotuladas por atividade (para WhatsApp) ===
+      async function blobWithLabel(blob, label){
+        const bmp = await createImageBitmap(blob);
+        const scale = 1080 / Math.max(bmp.width, bmp.height);
+        const w = Math.round(bmp.width * Math.min(1, scale));
+        const h = Math.round(bmp.height * Math.min(1, scale));
+        const pad = 12, bar = 64;
+        const canvas = (typeof OffscreenCanvas!=='undefined') ? new OffscreenCanvas(w, h+bar) : document.createElement('canvas');
+        canvas.width = w; canvas.height = h + bar;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#000'; ctx.fillRect(0,0,w,h+bar);
+        ctx.drawImage(bmp,0,0,w,h);
+        ctx.fillStyle = 'rgba(0,0,0,0.65)';
+        ctx.fillRect(0,h,w,bar);
+        ctx.font = 'bold 28px system-ui, sans-serif';
+        ctx.fillStyle = '#fff';
+        ctx.textBaseline = 'middle';
+        const maxWidth = w - 2*pad;
+        const words = label.split(' '); let line='', y=h+bar/2;
+        for(const word of words){
+          const test = line? line+" "+word : word;
+          if(ctx.measureText(test).width > maxWidth){
+            ctx.fillText(line, pad, y-14);
+            line = word; y+=24;
+          } else { line = test; }
+        }
+        ctx.fillText(line, pad, y);
+        const out = await (canvas.convertToBlob ? canvas.convertToBlob({type:'image/jpeg', quality:0.85}) : new Promise(res=> canvas.toBlob(res,'image/jpeg',0.85)));
+        return out;
+      }
 
-    /* ===== Service Worker ===== */
-    const isSecure = window.isSecureContext && /^(https:)|(^http:\/\/localhost)/.test(location.href);
-    const swUrl = (()=>{ const base = location.pathname.replace(/\/[^\/]*$/, '/'); return base + 'sw.js'; })();
-    if('serviceWorker' in navigator && isSecure){
-      fetch(swUrl,{cache:'no-store'}).then(r=>{ if(r.ok) navigator.serviceWorker.register(swUrl); }).catch(()=>{});
-    }
+      async function buildWAFiles(mode){ // mode: 'one-per-task' | 'all-per-task'
+        const tasks = currentFiltered();
+        const files = [];
+        for(const t of tasks){
+          const ids = (t.photoIds||[]);
+          if(!ids.length) continue;
+          if(mode==='one-per-task'){
+            const blob = await photoGet(ids[0]);
+            if(blob){ const labeled = await blobWithLabel(blob, `${t.title} — ${t.disc}`); files.push(new File([labeled], `${t.title.replace(/[^a-z0-9_-]+/gi,'_')}.jpg`, {type:'image/jpeg'})); }
+          } else {
+            for(let i=0;i<ids.length;i++){
+              const blob = await photoGet(ids[i]); if(!blob) continue;
+              const labeled = await blobWithLabel(blob, `${t.title} — ${t.disc}`);
+              files.push(new File([labeled], `${t.title.replace(/[^a-z0-9_-]+/gi,'_')}_${i+1}.jpg`, {type:'image/jpeg'}));
+            }
+          }
+        }
+        return files;
+      }
 
-    /* ========== Testes rápidos ========= */
-    ;(async function selfTests(){
-      try{
-        console.assert(typeof indexedDB !== 'undefined', 'IndexedDB disponível');
-        const blob = new Blob([new Uint8Array([1,2,3])], {type:'application/octet-stream'});
-        const id = await photoPut(blob);
-        const got = await photoGet(id); console.assert(got instanceof Blob, 'Leitura IDB ok'); await photoDel(id);
-        console.assert(typeof toDataUrlFile === 'function', 'toDataUrlFile disponível');
-        // Tamanho estimado do payload do localStorage
-        const size = new Blob([JSON.stringify(state||{})]).size;
-        console.assert(size < 4*1024*1024, 'Estado no localStorage < 4MB (fotos ficam no IDB)');
-        console.log('[TEST] OK — IDB e armazenamento ajustados');
-      }catch(e){ console.error('[TEST] Falhou', e); }
-    })();
+      async function shareForWhatsApp(mode){
+        const tasks = currentFiltered();
+        const text = report(tasks);
+        const files = await buildWAFiles(mode);
+        if(!files.length){ alert('Não há fotos nas tarefas filtradas.'); return; }
+        if(navigator.canShare && navigator.canShare({files})){
+          try{ await navigator.share({ files, text, title: 'Relatório da obra' }); }catch(e){}
+        }else{
+          const urls=[]; for(const f of files){ urls.push(URL.createObjectURL(f)); }
+          const imgs = urls.map(u=>`<img src="${u}" style="max-width:140px;margin:6px;border:1px solid #ddd;border-radius:8px">`).join('');
+          const w=window.open('','_blank');
+          w.document.write(`<pre>${text.replace(/</g,'&lt;')}</pre><div>${imgs}</div>`);
+          w.document.close();
+        }
+      }
+
+      bind('#btnWA1','click', ()=> shareForWhatsApp('one-per-task'));
+      bind('#btnWATodas','click', ()=> shareForWhatsApp('all-per-task'));
+
+      bind('#btnExport','click', ()=>{ const a=document.createElement('a'); const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); a.href=URL.createObjectURL(blob); a.download='obra-dados.json'; a.click(); });
+      bind('#btnImport','click', ()=> $('#importFile').click());
+      bind('#importFile','change', async (e)=>{ const f=e.target.files?.[0]; if(!f) return; const txt=await f.text(); try{ const obj=JSON.parse(txt); if(obj && Array.isArray(obj.tasks)){
+            for(const t of obj.tasks){
+              if(Array.isArray(t.photos) && t.photos.length){
+                t.photoIds = [];
+                for(const dataUrl of t.photos){
+                  try{ const resp = await fetch(dataUrl); const blob = await resp.blob(); const id = await photoPut(blob); t.photoIds.push(id); }catch(_){}}
+                delete t.photos;
+              }
+            }
+            state=obj; save(state); render();
+          } }
+        catch(_){ alert('JSON inválido'); } });
+
+      /* ========== Migração 1x: move fotos antigas (base64 no localStorage) para IndexedDB ========= */
+      (async function migrateIfNeeded(){
+        let changed=false;
+        for(const t of state.tasks){
+          if(Array.isArray(t.photos) && t.photos.length){
+            t.photoIds = t.photoIds||[];
+            for(const dataUrl of t.photos){ try{ const resp=await fetch(dataUrl); const blob=await resp.blob(); const id=await photoPut(blob); t.photoIds.push(id); }catch(_){} }
+            delete t.photos; changed=true;
+          }
+        }
+        if(changed) save(state);
+      })();
+
+      /* ========== Boot ========= */
+      render();
+
+      /* ===== Service Worker ===== */
+      const isSecure = window.isSecureContext && /^(https:)|(^http:\/\/localhost)/.test(location.href);
+      const swUrl = (()=>{ const base = location.pathname.replace(/\/[^\/]*$/, '/'); return base + 'sw.js'; })();
+      if('serviceWorker' in navigator && isSecure){
+        fetch(swUrl,{cache:'no-store'}).then(r=>{ if(r.ok) navigator.serviceWorker.register(swUrl); }).catch(()=>{});
+      }
+
+      /* ========== Testes rápidos ========= */
+      ;(async function selfTests(){
+        try{
+          console.assert(typeof indexedDB !== 'undefined', 'IndexedDB disponível');
+          const blob = new Blob([new Uint8Array([1,2,3])], {type:'application/octet-stream'});
+          const id = await photoPut(blob);
+          const got = await photoGet(id); console.assert(got instanceof Blob, 'Leitura IDB ok'); await photoDel(id);
+          const needBtns = ['#btnAdd','#btnReport','#btnSharePhotos','#btnWA1','#btnWATodas'];
+          needBtns.forEach(sel=>{ console.assert(document.querySelector(sel), sel+' presente'); });
+          const size = new Blob([JSON.stringify(state||{})]).size;
+          console.assert(size < 4*1024*1024, 'Estado no localStorage < 4MB (fotos no IDB)');
+          console.log('[TEST] OK — DOM pronto, binds seguros, IDB funcionando');
+        }catch(e){ console.error('[TEST] Falhou', e); }
+      })();
+    });
   </script>
 </body>
 </html>
