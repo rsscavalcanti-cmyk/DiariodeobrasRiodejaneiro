@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Obra — Tarefas</title>
+  <meta name="description" content="App web offline para controle de tarefas de obra: status, responsável, fotos, bloqueios e relatórios." />
+  <meta name="theme-color" content="#0ea5e9" />
+  <link rel="manifest" href="./manifest.webmanifest">
+  <style>
+    :root{ --bg:#f6fbff; --paper:#fff; --ink:#0f172a; --muted:#667085; --line:#e5eef7; --brand:#0ea5e9; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; --radius:16px }
+    *{box-sizing:border-box}
+    html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif}
+    h1,h2{margin:0}
+    .app{max-width:1100px;margin:0 auto;padding:16px 14px 56px}
+    header{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;margin-bottom:12px}
+    .controls{display:flex;gap:8px;flex-wrap:wrap}
+    .btn{appearance:none;border:2px solid var(--line);background:var(--paper);border-radius:999px;padding:10px 14px;font-weight:700;color:var(--ink);box-shadow:0 6px 18px rgba(0,0,0,.06);cursor:pointer}
+    .btn.primary{background:linear-gradient(180deg,#7dd3fc,#38bdf8);border-color:transparent;color:#063a59}
+    .btn:active{transform:translateY(1px)}
+
+    .filters{display:flex;gap:8px;flex-wrap:wrap}
+    select,input[type="date"],input[type="text"]{border:2px solid var(--line);border-radius:10px;padding:8px 10px}
+
+    .grid{display:grid;grid-template-columns:2fr 1fr;gap:14px}
+    @media(max-width:900px){.grid{grid-template-columns:1fr}}
+
+    .card{background:var(--paper);border:2px solid var(--line);border-radius:var(--radius);padding:12px;box-shadow:0 18px 40px rgba(0,0,0,.06)}
+
+    .task{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:10px;border:2px solid var(--line);border-radius:14px;background:linear-gradient(180deg,#fff,#f7fbff)}
+    .task + .task{margin-top:10px}
+    .status{padding:4px 8px;border-radius:999px;font-weight:800}
+    .st-todo{background:#fff;border:2px solid var(--line)}
+    .st-doing{background:#fff3d1;border:2px solid #fde68a}
+    .st-done{background:#dcfce7;border:2px solid #86efac}
+
+    .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+    @media(max-width:900px){.kpis{grid-template-columns:1fr}}
+    .kpi{background:#fff;border:2px solid var(--line);border-radius:12px;padding:12px;text-align:center}
+    .kpi b{display:block;font-size:24px}
+
+    .right .card{position:sticky;top:12px}
+    textarea{width:100%;min-height:90px;padding:10px;border-radius:10px;border:2px solid var(--line)}
+    .thumbs{display:flex;gap:8px;flex-wrap:wrap}
+    .thumbs img{width:70px;height:70px;border-radius:10px;border:2px solid var(--line);object-fit:cover}
+
+    .muted{color:var(--muted);font-size:12px}
+
+    footer{position:fixed;left:0;right:0;bottom:0;padding:8px 14px;text-align:center;font-size:11px;color:#556987;background:#ffffffcc;border-top:1px solid var(--line);backdrop-filter:saturate(140%) blur(6px)}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div>
+        <h1>Obra — Tarefas</h1>
+        <div class="muted">Controle simples por disciplina, status, responsável e prazo. Relatório em um clique.</div>
+      </div>
+      <div class="controls">
+        <button class="btn primary" id="btnAdd">+ Nova tarefa</button>
+        <button class="btn" id="btnReport">Relatório do dia</button>
+        <button class="btn" id="btnExport">Exportar JSON</button>
+        <input type="file" id="importFile" accept="application/json" hidden>
+        <button class="btn" id="btnImport">Importar</button>
+      </div>
+    </header>
+
+    <div class="card filters" style="margin-bottom:12px">
+      <select id="filterDisc">
+        <option value="">Disciplinas</option>
+        <option>Estrutura</option>
+        <option>Alvenaria</option>
+        <option>Elétrica</option>
+        <option>Hidráulica</option>
+        <option>Acabamentos</option>
+      </select>
+      <select id="filterStatus">
+        <option value="">Status</option>
+        <option value="todo">A fazer</option>
+        <option value="doing">Em execução</option>
+        <option value="done">Concluída</option>
+      </select>
+      <input id="filterSearch" type="text" placeholder="Buscar título ou responsável">
+      <input id="filterDate" type="date" title="Prazo até">
+    </div>
+
+    <div class="grid">
+      <section class="card left">
+        <div class="kpis" id="kpis"></div>
+        <div id="list"></div>
+      </section>
+
+      <aside class="right">
+        <div class="card">
+          <h2>Relatório</h2>
+          <div class="muted">Texto simples para WhatsApp/Email.</div>
+          <textarea id="reportBox" placeholder="Clique em \"Relatório do dia\""></textarea>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+            <button class="btn" id="btnCopy">Copiar</button>
+            <button class="btn" id="btnShare">Compartilhar</button>
+          </div>
+          <hr style="border:none;border-top:2px solid var(--line);margin:12px 0">
+          <h2>Bloqueios</h2>
+          <ul id="blocks" class="muted"></ul>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Modal de tarefa -->
+  <dialog id="dlg" style="border:none;border-radius:16px;padding:0;">
+    <form method="dialog" style="padding:14px;min-width:300px;max-width:560px">
+      <h2 id="dlgTitle">Nova tarefa</h2>
+      <div style="display:grid;gap:8px;margin-top:8px">
+        <input id="fTitulo" placeholder="Título (ex.: Laje 2º pav.)" required>
+        <select id="fDisc">
+          <option>Estrutura</option><option>Alvenaria</option><option>Elétrica</option><option>Hidráulica</option><option>Acabamentos</option>
+        </select>
+        <input id="fResp" placeholder="Responsável (ex.: Equipe A / João)">
+        <input id="fPrazo" type="date" placeholder="Prazo">
+        <label>Progresso: <span id="progVal">0</span>%</label>
+        <input id="fProg" type="range" min="0" max="100" value="0" oninput="progVal.textContent=this.value">
+        <select id="fStatus">
+          <option value="todo">A fazer</option>
+          <option value="doing">Em execução</option>
+          <option value="done">Concluída</option>
+        </select>
+        <textarea id="fNotas" placeholder="Notas / escopo / medições"></textarea>
+        <textarea id="fBlock" placeholder="Bloqueio? (ex.: falta concreto, aguarda liberação)"></textarea>
+        <label>Fotos: <input type="file" id="fFotos" accept="image/*" multiple></label>
+        <div class="thumbs" id="fThumbs"></div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+        <button class="btn" value="cancel">Cancelar</button>
+        <button class="btn primary" id="btnSave" value="default">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <footer>
+    Desenvolvido por <strong>Renato Stofel Cavalcanti</strong>
+  </footer>
+
+  <script>
+    /* ===================== Armazenamento ===================== */
+    const KEY='obra-app-v1';
+    const db = { tasks: [], seq: 1 };
+    const load=()=>{ try{ return JSON.parse(localStorage.getItem(KEY))||db }catch(_){ return db } };
+    const save=(state)=>localStorage.setItem(KEY, JSON.stringify(state));
+    let state = load();
+
+    /* ===================== Utilidades ===================== */
+    const $=sel=>document.querySelector(sel);
+    const $$=sel=>Array.from(document.querySelectorAll(sel));
+    const pad=n=>String(n).padStart(2,'0');
+    const todayStr=()=>{const d=new Date();return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`};
+
+    function uid(){ return 't'+(state.seq++) }
+
+    function photoFilesToDataURLs(files){
+      return Promise.all(Array.from(files).map(f=>new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.readAsDataURL(f) })))
+    }
+
+    /* ===================== Render ===================== */
+    const listEl = $('#list');
+    const kpisEl = $('#kpis');
+    const blocksEl = $('#blocks');
+
+    function kpis(){
+      const total = state.tasks.length;
+      const done = state.tasks.filter(t=>t.status==='done').length;
+      const doing = state.tasks.filter(t=>t.status==='doing').length;
+      kpisEl.innerHTML = `
+        <div class="kpi"><div>Tarefas</div><b>${total}</b></div>
+        <div class="kpi"><div>Concluídas</div><b>${done}</b></div>
+        <div class="kpi"><div>Em execução</div><b>${doing}</b></div>`;
+      const bs = state.tasks.filter(t=>t.block && !t.block_done).map(t=>`<li>• <b>${t.title}</b> — ${t.block}</li>`);
+      blocksEl.innerHTML = bs.join('') || '<li>Nenhum bloqueio pendente</li>';
+    }
+
+    function render(){
+      kpis();
+      const disc = $('#filterDisc').value; const st = $('#filterStatus').value; const txt = $('#filterSearch').value.toLowerCase(); const dt = $('#filterDate').value;
+      const tasks = state.tasks.filter(t=>
+        (!disc || t.disc===disc) && (!st || t.status===st) && (!dt || (t.due && t.due<=dt)) &&
+        (!txt || (t.title.toLowerCase().includes(txt) || (t.owner||'').toLowerCase().includes(txt)))
+      ).sort((a,b)=> (a.due||'9999').localeCompare(b.due||'9999'));
+      listEl.innerHTML='';
+      tasks.forEach(t=>{
+        const row=document.createElement('div'); row.className='task';
+        const stClass = t.status==='done'?'st-done': t.status==='doing'?'st-doing':'st-todo';
+        const left = document.createElement('div'); left.innerHTML = `<div class="status ${stClass}">${t.status==='done'?'Concluída':t.status==='doing'?'Em execução':'A fazer'}</div>`;
+        const mid = document.createElement('div');
+        const due = t.due? `• prazo: ${t.due}`:'';
+        const own = t.owner? `• resp.: ${t.owner}`:'';
+        mid.innerHTML = `<b>${t.title}</b><div class="muted">${t.disc} ${due} ${own} • ${t.progress||0}%</div>`;
+        const right = document.createElement('div'); right.style.display='grid'; right.style.gap='6px'; right.style.justifyItems='end';
+        const bEdit = document.createElement('button'); bEdit.className='btn'; bEdit.textContent='Editar'; bEdit.onclick=()=>openEdit(t.id);
+        const bDone = document.createElement('button'); bDone.className='btn'; bDone.textContent=t.status==='done'?'↺ Reabrir':'✓ Concluir'; bDone.onclick=()=>{ t.status = t.status==='done'?'doing':'done'; save(state); render(); };
+        right.append(bEdit,bDone);
+        row.append(left, mid, right);
+        listEl.appendChild(row);
+      });
+    }
+
+    /* ===================== CRUD ===================== */
+    const dlg = $('#dlg');
+    const fTitulo=$('#fTitulo'), fDisc=$('#fDisc'), fResp=$('#fResp'), fPrazo=$('#fPrazo'), fProg=$('#fProg'), fStatus=$('#fStatus'), fNotas=$('#fNotas'), fBlock=$('#fBlock'), fFotos=$('#fFotos'), fThumbs=$('#fThumbs');
+    let editingId=null;
+
+    function resetForm(){ editingId=null; $('#dlgTitle').textContent='Nova tarefa'; fTitulo.value=''; fDisc.value='Estrutura'; fResp.value=''; fPrazo.value=''; fProg.value=0; progVal.textContent=0; fStatus.value='todo'; fNotas.value=''; fBlock.value=''; fFotos.value=''; fThumbs.innerHTML=''; }
+
+    function openNew(){ resetForm(); dlg.showModal(); }
+
+    function openEdit(id){
+      const t = state.tasks.find(x=>x.id===id); if(!t) return;
+      editingId=id; $('#dlgTitle').textContent='Editar tarefa'; fTitulo.value=t.title; fDisc.value=t.disc; fResp.value=t.owner||''; fPrazo.value=t.due||''; fProg.value=t.progress||0; progVal.textContent=fProg.value; fStatus.value=t.status; fNotas.value=t.notes||''; fBlock.value=t.block||''; fThumbs.innerHTML=(t.photos||[]).map(p=>`<img src="${p}">`).join(''); dlg.showModal();
+    }
+
+    fFotos.addEventListener('change', async (e)=>{ const urls = await photoFilesToDataURLs(e.target.files); fThumbs.innerHTML += urls.map(u=>`<img src="${u}">`).join(''); });
+
+    $('#btnSave').addEventListener('click', async (e)=>{
+      e.preventDefault();
+      const photos = Array.from(fThumbs.querySelectorAll('img')).map(i=>i.src);
+      const obj = { id: editingId||uid(), title:fTitulo.value.trim(), disc:fDisc.value, owner:fResp.value.trim(), due:fPrazo.value||null, progress: +fProg.value, status:fStatus.value, notes:fNotas.value.trim(), block:fBlock.value.trim(), block_done:false, photos };
+      if(!obj.title){ alert('Título obrigatório'); return; }
+      if(editingId){ const i=state.tasks.findIndex(t=>t.id===editingId); state.tasks[i]=obj; }
+      else{ state.tasks.push(obj); }
+      save(state); dlg.close(); render();
+    });
+
+    /* ===================== Filtros, relatório e I/O ===================== */
+    $$('#filterDisc, #filterStatus, #filterDate').forEach(el=> el.addEventListener('change', render));
+    $('#filterSearch').addEventListener('input', render);
+
+    $('#btnAdd').onclick=openNew;
+
+    function report(){
+      const d=new Date(); const head=`Relatório — ${d.toLocaleDateString()}\n`+"-".repeat(18)+"\n";
+      const parts = state.tasks.map(t=>{
+        const p1 = `• ${t.title} [${t.disc}] — ${t.progress||0}% — ${t.status}`;
+        const p2 = [t.owner?`resp.: ${t.owner}`:'', t.due?`prazo: ${t.due}`:''].filter(Boolean).join(' | ');
+        const p3 = t.block?`\n  BLOQUEIO: ${t.block}`:'';
+        return p1 + (p2?`\n  ${p2}`:'') + (t.notes?`\n  notas: ${t.notes}`:'') + p3;
+      }).join('\n');
+      return head+parts;
+    }
+
+    $('#btnReport').onclick=()=>{ $('#reportBox').value=report(); };
+    $('#btnCopy').onclick=()=>{ const ta=$('#reportBox'); ta.select(); document.execCommand('copy'); };
+    $('#btnShare').onclick=async()=>{
+      const text = $('#reportBox').value || report();
+      if(navigator.share){ try{ await navigator.share({text}); }catch(_){} }
+      else{ $('#reportBox').value=text; alert('Relatório pronto. Copie e cole.'); }
+    };
+
+    $('#btnExport').onclick=()=>{ const a=document.createElement('a'); const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); a.href=URL.createObjectURL(blob); a.download='obra-dados.json'; a.click(); };
+    $('#btnImport').onclick=()=> $('#importFile').click();
+    $('#importFile').addEventListener('change', async (e)=>{ const f=e.target.files?.[0]; if(!f) return; const txt=await f.text(); try{ const obj=JSON.parse(txt); if(obj && Array.isArray(obj.tasks)){ state=obj; save(state); render(); } }catch(_){ alert('JSON inválido'); } });
+
+    /* ===================== Seed de exemplo ===================== */
+    if(state.tasks.length===0){
+      state.tasks = [
+        {id:uid(), title:'Forma e armação — Laje pav. 2', disc:'Estrutura', owner:'Equipe A', due:todayStr(), progress:10, status:'doing', notes:'Conferir bitola CA-50', block:'Aguardando liberação PEC', photos:[]},
+        {id:uid(), title:'Levantamento alvenaria — Bloco B', disc:'Alvenaria', owner:'Equipe B', due:null, progress:0, status:'todo', notes:'Confirmar paginação', block:'', photos:[]},
+        {id:uid(), title:'Eletrocalhas 3º pav.', disc:'Elétrica', owner:'Carlos', due:null, progress:100, status:'done', notes:'Fotos no anexo', block:'', photos:[]},
+      ];
+      save(state);
+    }
+
+    /* ===================== Boot ===================== */
+    render();
+
+    /* ===== Service Worker (produção) ===== */
+    const isSecure = window.isSecureContext && /^(https:)|(^http:\/\/localhost)/.test(location.href);
+    const swUrl = (()=>{ const base = location.pathname.replace(/\/[^\/]*$/, '/'); return base + 'sw.js'; })();
+    if('serviceWorker' in navigator && isSecure){
+      fetch(swUrl,{cache:'no-store'}).then(r=>{ if(r.ok) navigator.serviceWorker.register(swUrl); }).catch(()=>{});
+    }
+  </script>
+</body>
+</html>
