@@ -1,11 +1,10 @@
-
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Obra — Tarefas</title>
-  <meta name="description" content="App web offline para controle de tarefas de obra, com compartilhamento de fotos + relatório pelo Web Share API." />
+  <meta name="description" content="Controle simples de tarefas de obra com fotos e relatório." />
   <meta name="theme-color" content="#0ea5e9" />
   <link rel="manifest" href="./manifest.webmanifest">
   <style>
@@ -54,13 +53,12 @@
     <header>
       <div>
         <h1>Obra — Tarefas</h1>
-        <div class="muted">Controle simples por disciplina, status, responsável e prazo. Relatório em um clique.</div>
       </div>
       <div class="controls">
-        <button class="btn primary" id="btnAdd">+ Nova tarefa</button>
-        <button class="btn" id="btnReport">Relatório do dia</button>
-        <button class="btn" id="btnSharePhotos">Compartilhar fotos + relatório</button>
-        <button class="btn" id="btnExport">Exportar JSON</button>
+        <button class="btn primary" id="btnAdd">+ Nova</button>
+        <button class="btn" id="btnReport">Relatório</button>
+        <button class="btn" id="btnSharePhotos">Fotos + relatório</button>
+        <button class="btn" id="btnExport">Exportar</button>
         <input type="file" id="importFile" accept="application/json" hidden>
         <button class="btn" id="btnImport">Importar</button>
       </div>
@@ -69,11 +67,10 @@
     <div class="card filters" style="margin-bottom:12px">
       <select id="filterDisc">
         <option value="">Disciplinas</option>
-        <option>Estrutura</option>
-        <option>Alvenaria</option>
         <option>Elétrica</option>
         <option>Hidráulica</option>
-        <option>Acabamentos</option>
+        <option>Incêndio</option>
+        <option>Gás</option>
       </select>
       <select id="filterStatus">
         <option value="">Status</option>
@@ -81,7 +78,7 @@
         <option value="doing">Em execução</option>
         <option value="done">Concluída</option>
       </select>
-      <input id="filterSearch" type="text" placeholder="Buscar título ou responsável">
+      <input id="filterSearch" type="text" placeholder="Buscar">
       <input id="filterDate" type="date" title="Prazo até">
     </div>
 
@@ -94,11 +91,10 @@
       <aside class="right">
         <div class="card">
           <h2>Relatório</h2>
-          <div class="muted">Texto simples para WhatsApp/Email.</div>
-          <textarea id="reportBox" placeholder="Clique em &quot;Relatório do dia&quot;"></textarea>
+          <textarea id="reportBox" placeholder="Gerar relatório"></textarea>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
             <button class="btn" id="btnCopy">Copiar</button>
-            <button class="btn" id="btnShare">Compartilhar (texto)</button>
+            <button class="btn" id="btnShare">Compartilhar</button>
           </div>
           <hr style="border:none;border-top:2px solid var(--line);margin:12px 0">
           <h2>Bloqueios</h2>
@@ -113,11 +109,11 @@
     <form method="dialog" style="padding:14px;min-width:300px;max-width:560px">
       <h2 id="dlgTitle">Nova tarefa</h2>
       <div style="display:grid;gap:8px;margin-top:8px">
-        <input id="fTitulo" placeholder="Título (ex.: Laje 2º pav.)" required>
+        <input id="fTitulo" placeholder="Título" required>
         <select id="fDisc">
-          <option>Estrutura</option><option>Alvenaria</option><option>Elétrica</option><option>Hidráulica</option><option>Acabamentos</option>
+          <option>Elétrica</option><option>Hidráulica</option><option>Incêndio</option><option>Gás</option>
         </select>
-        <input id="fResp" placeholder="Responsável (ex.: Equipe A / João)">
+        <input id="fResp" placeholder="Responsável">
         <input id="fPrazo" type="date" placeholder="Prazo">
         <label>Progresso: <span id="progVal">0</span>%</label>
         <input id="fProg" type="range" min="0" max="100" value="0" oninput="progVal.textContent=this.value">
@@ -126,9 +122,9 @@
           <option value="doing">Em execução</option>
           <option value="done">Concluída</option>
         </select>
-        <textarea id="fNotas" placeholder="Notas / escopo / medições"></textarea>
-        <textarea id="fBlock" placeholder="Bloqueio? (ex.: falta concreto, aguarda liberação)"></textarea>
-        <label>Fotos: <input type="file" id="fFotos" accept="image/*" multiple></label>
+        <textarea id="fNotas" placeholder="Notas"></textarea>
+        <textarea id="fBlock" placeholder="Bloqueio"></textarea>
+        <label>Fotos: <input type="file" id="fFotos" accept="image/*" multiple capture="environment"></label>
         <div class="thumbs" id="fThumbs"></div>
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
@@ -144,7 +140,7 @@
 
   <script>
     /* ===================== Armazenamento ===================== */
-    const KEY='obra-app-v3';
+    const KEY='obra-app-v4';
     const db = { tasks: [], seq: 1 };
     const load=()=>{ try{ return JSON.parse(localStorage.getItem(KEY))||db }catch(_){ return db } };
     const save=(state)=>localStorage.setItem(KEY, JSON.stringify(state));
@@ -155,7 +151,8 @@
     const $$=sel=>Array.from(document.querySelectorAll(sel));
     const pad=n=>String(n).padStart(2,'0');
     const todayStr=()=>{const d=new Date();return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`};
-    const toDataUrlFile=(dataUrl, name='foto.jpg')=>{ const [hdr,b64]=dataUrl.split(','); const mime=(hdr.match(/data:(.*?);/)||[])[1]||'image/jpeg'; const bin=atob(b64); const len=bin.length; const bytes=new Uint8Array(len); for(let i=0;i<len;i++){bytes[i]=bin.charCodeAt(i)}; return new File([bytes], name, {type:mime}); };
+    // ÚNICA definição de toDataUrlFile (evita erro de redefinição)
+    const toDataUrlFile=(dataUrl, name='foto.jpg')=>{ const [hdr,b64]=dataUrl.split(','); const mime=(hdr.match(/data:(.*?);/)||[])[1]||'image/jpeg'; const bin=atob(b64||''); const len=bin.length; const bytes=new Uint8Array(len); for(let i=0;i<len;i++){bytes[i]=bin.charCodeAt(i)}; return new File([bytes], name, {type:mime}); };
 
     function uid(){ return 't'+(state.seq++) }
     function photoFilesToDataURLs(files){ return Promise.all(Array.from(files).map(f=>new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.readAsDataURL(f) })))}
@@ -178,11 +175,11 @@
       const done = state.tasks.filter(t=>t.status==='done').length;
       const doing = state.tasks.filter(t=>t.status==='doing').length;
       kpisEl.innerHTML = `
-        <div class="kpi"><div>Tarefas</div><b>${total}</b></div>
+        <div class="kpi"><div>Total</div><b>${total}</b></div>
         <div class="kpi"><div>Concluídas</div><b>${done}</b></div>
-        <div class="kpi"><div>Em execução</div><b>${doing}</b></div>`;
+        <div class="kpi"><div>Execução</div><b>${doing}</b></div>`;
       const bs = state.tasks.filter(t=>t.block && !t.block_done).map(t=>`<li>• <b>${t.title}</b> — ${t.block}</li>`);
-      blocksEl.innerHTML = bs.join('') || '<li>Nenhum bloqueio pendente</li>';
+      blocksEl.innerHTML = bs.join('') || '<li>—</li>';
     }
 
     function render(){
@@ -194,8 +191,8 @@
         const stClass = t.status==='done'?'st-done': t.status==='doing'?'st-doing':'st-todo';
         const left = document.createElement('div'); left.innerHTML = `<div class="status ${stClass}">${t.status==='done'?'Concluída':t.status==='doing'?'Em execução':'A fazer'}</div>`;
         const mid = document.createElement('div');
-        const due = t.due? `• prazo: ${t.due}`:'';
-        const own = t.owner? `• resp.: ${t.owner}`:'';
+        const due = t.due? `• ${t.due}`:'';
+        const own = t.owner? `• ${t.owner}`:'';
         const pics = (t.photos||[]).length?` • 📷 ${t.photos.length}`:'';
         mid.innerHTML = `<b>${t.title}</b><div class="muted">${t.disc} ${due} ${own} • ${t.progress||0}%${pics}</div>`;
         const right = document.createElement('div'); right.style.display='grid'; right.style.gap='6px'; right.style.justifyItems='end';
@@ -212,7 +209,7 @@
     const fTitulo=$('#fTitulo'), fDisc=$('#fDisc'), fResp=$('#fResp'), fPrazo=$('#fPrazo'), fProg=$('#fProg'), fStatus=$('#fStatus'), fNotas=$('#fNotas'), fBlock=$('#fBlock'), fFotos=$('#fFotos'), fThumbs=$('#fThumbs');
     let editingId=null;
 
-    function resetForm(){ editingId=null; $('#dlgTitle').textContent='Nova tarefa'; fTitulo.value=''; fDisc.value='Estrutura'; fResp.value=''; fPrazo.value=''; fProg.value=0; progVal.textContent=0; fStatus.value='todo'; fNotas.value=''; fBlock.value=''; fFotos.value=''; fThumbs.innerHTML=''; }
+    function resetForm(){ editingId=null; $('#dlgTitle').textContent='Nova tarefa'; fTitulo.value=''; fDisc.value='Elétrica'; fResp.value=''; fPrazo.value=''; fProg.value=0; progVal.textContent=0; fStatus.value='todo'; fNotas.value=''; fBlock.value=''; fFotos.value=''; fThumbs.innerHTML=''; }
 
     function openNew(){ resetForm(); dlg.showModal(); }
 
@@ -221,12 +218,23 @@
       editingId=id; $('#dlgTitle').textContent='Editar tarefa'; fTitulo.value=t.title; fDisc.value=t.disc; fResp.value=t.owner||''; fPrazo.value=t.due||''; fProg.value=t.progress||0; progVal.textContent=fProg.value; fStatus.value=t.status; fNotas.value=t.notes||''; fBlock.value=t.block||''; fThumbs.innerHTML=(t.photos||[]).map(p=>`<img src="${p}">`).join(''); dlg.showModal();
     }
 
-    fFotos.addEventListener('change', async (e)=>{ const urls = await photoFilesToDataURLs(e.target.files); fThumbs.innerHTML += urls.map(u=>`<img src="${u}">`).join(''); });
+    // PREVIEW rápido ao selecionar (não depende do salvar)
+    fFotos.addEventListener('change', async (e)=>{
+      const urls = await photoFilesToDataURLs(e.target.files);
+      fThumbs.innerHTML += urls.map(u=>`<img src="${u}">`).join('');
+    });
+
+    // GARANTE salvar fotos mesmo clicando "Salvar" logo após escolher
+    async function gatherPhotosForSave(){
+      const fromThumbs = Array.from(fThumbs.querySelectorAll('img')).map(i=>i.src);
+      const pendingFiles = fFotos.files && fFotos.files.length ? await photoFilesToDataURLs(fFotos.files) : [];
+      return [...fromThumbs, ...pendingFiles];
+    }
 
     $('#btnSave').addEventListener('click', async (e)=>{
       e.preventDefault();
-      const photos = Array.from(fThumbs.querySelectorAll('img')).map(i=>i.src);
-      const obj = { id: editingId||uid(), title:fTitulo.value.trim(), disc:fDisc.value, owner:fResp.value.trim(), due:fPrazo.value||null, progress: +fProg.value, status:fStatus.value, notes:fNotas.value.trim(), block:fBlock.value.trim(), block_done:false, photos };
+      const photos = await gatherPhotosForSave();
+      const obj = { id: editingId||uid(), title:fTitulo.value.trim(), disc:fDisc.value, owner:fResp.value.trim(), due:fPrazo.value||null, progress:+fProg.value, status:fStatus.value, notes:fNotas.value.trim(), block:fBlock.value.trim(), block_done:false, photos };
       if(!obj.title){ alert('Título obrigatório'); return; }
       if(editingId){ const i=state.tasks.findIndex(t=>t.id===editingId); state.tasks[i]=obj; }
       else{ state.tasks.push(obj); }
@@ -243,7 +251,7 @@
       const d=new Date(); const head=`Relatório — ${d.toLocaleDateString()}\n`+"-".repeat(18)+"\n";
       const parts = tasks.map(t=>{
         const p1 = `• ${t.title} [${t.disc}] — ${t.progress||0}% — ${t.status}`;
-        const p2 = [t.owner?`resp.: ${t.owner}`:'', t.due?`prazo: ${t.due}`:''].filter(Boolean).join(' | ');
+        const p2 = [t.owner||'', t.due||''].filter(Boolean).join(' | ');
         const p3 = t.block?`\n  BLOQUEIO: ${t.block}`:'';
         const p4 = (t.photos||[]).length?`\n  fotos: ${t.photos.length}`:'';
         return p1 + (p2?`\n  ${p2}`:'') + (t.notes?`\n  notas: ${t.notes}`:'') + p3 + p4;
@@ -259,23 +267,21 @@
       else{ $('#reportBox').value=text; alert('Relatório pronto. Copie e cole.'); }
     };
 
-    // === Compartilhar fotos + relatório (Web Share API Level 2) ===
+    // Compartilhar fotos + relatório (Web Share API Level 2)
     async function shareWithPhotos(){
       const tasks = currentFiltered();
       const text = report(tasks);
       const photos = tasks.flatMap(t=> (t.photos||[]));
-      if(!photos.length){ alert('Não há fotos nas tarefas filtradas.'); return; }
-      const MAX = 20; // limite de segurança
+      if(!photos.length){ alert('Sem fotos nas tarefas filtradas.'); return; }
+      const MAX = 20;
       const files = photos.slice(0, MAX).map((d,i)=> toDataUrlFile(d, `obra_${i+1}.jpg`));
       if(navigator.canShare && navigator.canShare({files})){
-        try{ await navigator.share({ files, text, title: 'Relatório da obra' }); }
-        catch(e){ /* cancelado */ }
+        try{ await navigator.share({ files, text, title: 'Relatório da obra' }); }catch(e){}
       }else{
         const w = window.open('', '_blank');
         const imgs = photos.map(src=>`<img src="${src}" style="max-width:140px;margin:6px;border:1px solid #ddd;border-radius:8px">`).join('');
         w.document.write(`<pre>${text.replace(/</g,'&lt;')}</pre><div>${imgs}</div>`);
         w.document.close();
-        alert('Seu navegador não suporta compartilhamento de arquivos. Abri uma página com o relatório e as fotos.');
       }
     }
     $('#btnSharePhotos').onclick = shareWithPhotos;
@@ -284,12 +290,13 @@
     $('#btnImport').onclick=()=> $('#importFile').click();
     $('#importFile').addEventListener('change', async (e)=>{ const f=e.target.files?.[0]; if(!f) return; const txt=await f.text(); try{ const obj=JSON.parse(txt); if(obj && Array.isArray(obj.tasks)){ state=obj; save(state); render(); } }catch(_){ alert('JSON inválido'); } });
 
-    /* ===================== Seed de exemplo ===================== */
+    /* ===================== Seeds (apenas exemplos) ===================== */
     if(state.tasks.length===0){
       state.tasks = [
-        {id:uid(), title:'Forma e armação — Laje pav. 2', disc:'Estrutura', owner:'Equipe A', due:todayStr(), progress:10, status:'doing', notes:'Conferir bitola CA-50', block:'Aguardando liberação PEC', photos:[]},
-        {id:uid(), title:'Levantamento alvenaria — Bloco B', disc:'Alvenaria', owner:'Equipe B', due:null, progress:0, status:'todo', notes:'Confirmar paginação', block:'', photos:[]},
-        {id:uid(), title:'Eletrocalhas 3º pav.', disc:'Elétrica', owner:'Carlos', due:null, progress:100, status:'done', notes:'Fotos no anexo', block:'', photos:[]},
+        {id:uid(), title:'Exemplo — Elétrica', disc:'Elétrica', owner:'', due:todayStr(), progress:0, status:'todo', notes:'', block:'', photos:[]},
+        {id:uid(), title:'Exemplo — Hidráulica', disc:'Hidráulica', owner:'', due:'', progress:0, status:'todo', notes:'', block:'', photos:[]},
+        {id:uid(), title:'Exemplo — Incêndio', disc:'Incêndio', owner:'', due:'', progress:0, status:'todo', notes:'', block:'', photos:[]},
+        {id:uid(), title:'Exemplo — Gás', disc:'Gás', owner:'', due:'', progress:0, status:'todo', notes:'', block:'', photos:[]},
       ];
       save(state);
     }
@@ -303,6 +310,18 @@
     if('serviceWorker' in navigator && isSecure){
       fetch(swUrl,{cache:'no-store'}).then(r=>{ if(r.ok) navigator.serviceWorker.register(swUrl); }).catch(()=>{});
     }
+
+    /* ===================== Testes rápidos (dev) ===================== */
+    ;(function selfTests(){
+      try{
+        console.assert(typeof toDataUrlFile === 'function', 'toDataUrlFile disponível');
+        const onePxPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==';
+        const f = toDataUrlFile(onePxPng, 't.png');
+        console.assert(f instanceof File, 'toDataUrlFile retorna File');
+        console.assert(f.name === 't.png', 'File tem nome correto');
+        console.log('[TEST] OK — utilidades básicas funcionando');
+      }catch(e){ console.error('[TEST] Falhou', e); }
+    })();
   </script>
 </body>
 </html>
