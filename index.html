@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Registro Único — Ocorrências (WhatsApp)</title>
-  <meta name="description" content="Registrar UMA ocorrência por vez e enviar texto + card-imagem + anexos via WhatsApp. Campo 'Bloco/Setor' livre e captura de câmera integrada." />
+  <meta name="description" content="Registrar UMA ocorrência por vez e enviar texto + card-imagem + anexos via WhatsApp. Campo 'Bloco/Setor' livre, excluir fotos duplicadas e abertura de câmera nativa." />
   <meta name="theme-color" content="#0ea5e9" />
   <style>
     :root{ --bg:#f6fbff; --paper:#fff; --ink:#0f172a; --muted:#667085; --line:#e5eef7; --brand:#0ea5e9; --ok:#16a34a; --warn:#f59e0b; --bad:#ef4444; --radius:16px }
@@ -28,14 +28,14 @@
     .primary{background:linear-gradient(180deg,#7dd3fc,#38bdf8);border-color:transparent;color:#063a59}
     .preview{padding:10px;white-space:pre-wrap;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;background:#f8fbff;border-top:2px dashed var(--line);max-height:220px;overflow:auto}
     .thumbs{display:flex;gap:8px;flex-wrap:wrap}
-    .thumbs img{width:70px;height:70px;object-fit:cover;border-radius:10px;border:2px solid var(--line)}
+    .thumb{position:relative}
+    .thumb img{width:70px;height:70px;object-fit:cover;border-radius:10px;border:2px solid var(--line)}
+    .thumb button{position:absolute;top:-8px;right:-8px;border:none;background:#ef4444;color:#fff;border-radius:999px;width:22px;height:22px;cursor:pointer;font-weight:900;line-height:1}
     .opts{display:flex;gap:12px;align-items:center}
     footer{font-size:11px;color:var(--muted);padding:8px;text-align:center}
     canvas{display:none}
     /* câmera */
     .camBar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-    .camWrap{display:none;border:2px dashed var(--line);border-radius:12px;padding:10px}
-    video{width:100%;max-height:260px;border-radius:10px;background:#000}
   </style>
 </head>
 <body>
@@ -135,21 +135,13 @@
         </div>
 
         <label>Anexos (opcional) — fotos/vídeos
-          <!-- input rápido que pede câmera (mobile) -->
           <div class="camBar">
-            <button class="btn" type="button" id="btnOpenCam">📷 Usar câmera agora</button>
-            <span class="help">Funciona melhor via HTTPS e no celular. Em iOS/Android, o seletor abaixo já abre a câmera com <code>capture</code>.</span>
+            <!-- Abre a câmera nativa do aparelho diretamente -->
+            <button class="btn" type="button" id="btnNativeCamera">📷 Abrir câmera do aparelho</button>
+            <input id="midia" type="file" accept="image/*,video/*" multiple capture="environment" style="display:none" />
           </div>
-          <div class="camWrap" id="camWrap">
-            <video id="cam" playsinline autoplay muted></video>
-            <div style="display:flex;gap:8px;margin-top:8px">
-              <button class="btn primary" type="button" id="btnSnap">Tirar foto</button>
-              <button class="btn" type="button" id="btnCloseCam">Fechar câmera</button>
-            </div>
-          </div>
-          <input id="midia" type="file" accept="image/*,video/*" multiple capture="environment" />
           <div class="thumbs" id="thumbs"></div>
-          <div class="help">⚠️ WhatsApp Web não aceita anexos por URL. Em celulares com <em>Web Share</em>, enviamos arquivos direto; no desktop, abriremos o card para você salvar e anexar.</div>
+          <div class="help">Dica: toque e segure em uma miniatura para apagar; o app também filtra duplicadas automaticamente.</div>
         </label>
 
         <div class="actions">
@@ -165,9 +157,8 @@
     <footer>— <strong><em>Registro para Gestão</em></strong></footer>
   </div>
 
-  <!-- Canvas usado para gerar o card-imagem e para o snapshot da câmera -->
+  <!-- Canvas usado para gerar o card-imagem -->
   <canvas id="cardCanvas" width="1080" height="1350"></canvas>
-  <canvas id="snapCanvas" width="1600" height="1200" style="display:none"></canvas>
 
   <script>
     // ====== Util: data/hora Brasília ======
@@ -199,34 +190,62 @@
     const chkCard = document.getElementById('chkCard');
     const cardCanvas = document.getElementById('cardCanvas');
 
-    // Câmera
-    const camWrap = document.getElementById('camWrap');
-    const cam = document.getElementById('cam');
-    const btnOpenCam = document.getElementById('btnOpenCam');
-    const btnCloseCam = document.getElementById('btnCloseCam');
-    const btnSnap = document.getElementById('btnSnap');
-    const snapCanvas = document.getElementById('snapCanvas');
-    let camStream = null;
-
     // ====== Persistência do último número ======
     const KEY_FONE = 'whats-fone-default';
     fone.value = localStorage.getItem(KEY_FONE) || '';
     fone.addEventListener('change', ()=> localStorage.setItem(KEY_FONE, (fone.value||'').replace(/\D/g,'')));
 
-    // ====== UI dinâmica ======
-    tipo.addEventListener('change', ()=>{ lblOutro.style.display = (tipo.value === 'Outros') ? '' : 'none'; });
-    midia.addEventListener('change', (e)=>{ thumbs.innerHTML = ''; const files = Array.from(e.target.files||[]).slice(0, 20); files.forEach(f=> addThumbFromFile(f)); });
+    // ====== Estado de anexos (com deduplicação) ======
+    let filesState = []; // { id, file, hash }
 
-    function addThumbFromFile(file){ const url = URL.createObjectURL(file); const img = document.createElement('img'); img.src = url; img.alt = file.name; thumbs.appendChild(img); }
+    // Gera um id estável (nome+tamanho+última modificação). Evita dupl.
+    function fileKey(f){ return `${f.name}|${f.size}|${f.lastModified}`; }
 
-    // ====== Template do texto para WhatsApp ======
+    function addFiles(list){
+      for(const f of list){
+        const key = fileKey(f);
+        if(filesState.some(x=>x.id===key)) continue; // dedup
+        filesState.push({ id:key, file:f });
+        addThumb(key, f);
+      }
+      renderCount();
+    }
+
+    function removeFile(id){
+      const i = filesState.findIndex(x=>x.id===id);
+      if(i>-1){ filesState.splice(i,1); const el = document.querySelector(`[data-id="${id}"]`); el?.remove(); renderCount(); }
+    }
+
+    function renderCount(){
+      // poderíamos mostrar total se quiser
+    }
+
+    function addThumb(id, file){
+      const url = URL.createObjectURL(file);
+      const wrap = document.createElement('div');
+      wrap.className='thumb';
+      wrap.dataset.id = id;
+      wrap.innerHTML = `<img src="${url}" alt="${file.name}"><button title="Apagar">×</button>`;
+      wrap.querySelector('button').addEventListener('click', ()=> removeFile(id));
+      // apaga ao segurar 700ms
+      let pressT=null; wrap.addEventListener('touchstart',()=>{ pressT=setTimeout(()=>removeFile(id),700); }); wrap.addEventListener('touchend',()=>clearTimeout(pressT));
+      thumbs.appendChild(wrap);
+    }
+
+    // Input escondido abre a câmera nativa (Android/iOS) por causa do capture="environment"
+    document.getElementById('btnNativeCamera').addEventListener('click', ()=> midia.click());
+
+    // Quando selecionar via câmera/galeria
+    midia.addEventListener('change', (e)=>{ const list = Array.from(e.target.files||[]); addFiles(list); midia.value = ''; });
+
+    // ====== Template do texto ======
     function buildMessage(){
       const ref = makeRef();
       const dataHora = nowBr();
       const t = tipo.value || '(sem tipo)';
       const t2 = (t === 'Outros' ? (outroTexto.value.trim()||'(descrever)') : t);
       const prazoFmt = (prazo.value? isoBrDate(prazo.value): '-');
-      const anexos = ((midia.files||[]).length + extraFiles.length);
+      const anexos = filesState.length + (chkCard.checked?1:0);
       const linhas = [
         `*🏗️ OCORRÊNCIA DE OBRA*  •  *Ref:* ${ref}`,
         `━━━━━━━━━━━━━━━━━━━━`,
@@ -240,7 +259,7 @@
         `*📅 Prazo desejado:* ${prazoFmt}`,
         `*👷 Responsável/Equipe:* ${resp.value||'-'}`,
         `*🕒 Data/Hora (Brasília):* ${dataHora}`,
-        anexos? `*📎 Anexos:* ${anexos} arquivo(s)` : null,
+        filesState.length? `*📎 Anexos:* ${anexos} arquivo(s)` : null,
         `━━━━━━━━━━━━━━━━━━━━`,
         `*_*Registro para Gestão*_*`
       ].filter(Boolean);
@@ -250,60 +269,15 @@
     function updatePreview(){ preview.textContent = buildMessage(); }
     document.getElementById('btnPreview').addEventListener('click', updatePreview);
     document.getElementById('btnCopy').addEventListener('click', ()=>{ const text = buildMessage(); navigator.clipboard?.writeText(text).then(()=>{ preview.textContent = text + "\n\n(copiado para a área de transferência)"; }); });
-    document.getElementById('btnClear').addEventListener('click', ()=>{ form.reset(); thumbs.innerHTML=''; extraFiles.length=0; updatePreview(); tipo.dispatchEvent(new Event('change')); stopCam(); });
+    document.getElementById('btnClear').addEventListener('click', ()=>{ form.reset(); thumbs.innerHTML=''; filesState=[]; updatePreview(); });
 
-    // ====== Geração do CARD (imagem) ======
+    // ====== CARD ======
     function wrapText(ctx, text, x, y, maxW, lineH){ const words = text.split(/\s+/); let line=''; const lines=[]; for(let i=0;i<words.length;i++){ const test=line+words[i]+' '; if(ctx.measureText(test).width>maxW && i>0){ lines.push(line.trim()); line=words[i]+' '; } else { line=test; } } lines.push(line.trim()); lines.forEach((ln,i)=>ctx.fillText(ln,x,y+i*lineH)); return y+(lines.length-1)*lineH; }
-
     async function buildCardFile(){ const W=1080,H=1350,P=64; const ctx=cardCanvas.getContext('2d'); ctx.clearRect(0,0,W,H); const g=ctx.createLinearGradient(0,0,0,H); g.addColorStop(0,'#eaf6ff'); g.addColorStop(1,'#ffffff'); ctx.fillStyle=g; ctx.fillRect(0,0,W,H); ctx.fillStyle='#0f172a'; ctx.font='bold 48px Inter, Arial'; ctx.fillText('OCORRÊNCIA DE OBRA', P, P+8); const ref=makeRef(); ctx.font='bold 28px Inter, Arial'; ctx.fillStyle='#0ea5e9'; ctx.fillText(`Ref: ${ref}`, P, P+54); const boxY=P+90, boxH=H-boxY-180, boxR=28; ctx.fillStyle='#00000010'; ctx.fillRect(P+6,boxY+6,W-P*2,boxH); ctx.fillStyle='#ffffff'; ctx.strokeStyle='#e5eef7'; ctx.lineWidth=4; const bw=W-P*2,bh=boxH,x=P,y=boxY,r=boxR; ctx.beginPath(); ctx.moveTo(x+r,y); ctx.lineTo(x+bw-r,y); ctx.quadraticCurveTo(x+bw,y,x+bw,y+r); ctx.lineTo(x+bw,y+bh-r); ctx.quadraticCurveTo(x+bw,y+bh,x+bw-r,y+bh); ctx.lineTo(x+r,y+bh); ctx.quadraticCurveTo(x,y+bh,x,y+bh-r); ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.fillStyle='#0f172a'; ctx.font='600 34px Inter, Arial'; let yy=y+56; const lh=44, maxW=bw-40, xx=x+20; const linhas=[ `Tipo: ${tipo.value==='Outros' ? (outroTexto.value.trim()||'(descrever)') : (tipo.value||'(sem tipo)')}`, `Bloco/Setor: ${bloco.value||'-'}`, `Pav/Unidade: ${pav.value||'-'}`, `Local: ${localDet.value||'-'}`, `Descrição:`]; linhas.forEach(t=>{ ctx.fillText(t,xx,yy); yy+=lh; }); ctx.font='400 30px Inter, Arial'; yy=wrapText(ctx,(desc.value.trim()||'-'),xx,yy,maxW,40)+26; ctx.font='600 34px Inter, Arial'; [ `Ação solicitada: ${acao.value}`, `Prioridade: ${prio.value}`, `Prazo desejado: ${prazo.value? isoBrDate(prazo.value): '-'}`, `Resp./Equipe: ${resp.value||'-'}`, `Data/Hora (Brasília): ${nowBr()}` ].forEach(t=>{ ctx.fillText(t,xx,yy); yy+=lh; }); ctx.font='italic 700 26px Inter, Arial'; ctx.fillStyle='#64748b'; ctx.fillText('— Registro para Gestão', P, H-90); ctx.save(); ctx.translate(W-140,H-70); ctx.rotate(-Math.PI/12); ctx.globalAlpha=0.08; ctx.fillStyle='#0ea5e9'; ctx.font='900 90px Inter, Arial'; ctx.fillText('SYSTEM', -200, 0); ctx.restore(); const blob = await new Promise(res=> cardCanvas.toBlob(res, 'image/png', 0.92)); return new File([blob], `ocorrencia_${ref}.png`, {type:'image/png'}); }
 
-    // ====== CÂMERA: abrir, fechar, tirar foto ======
-    async function openCam(){
-      if(camStream) return; // já aberta
-      try{
-        const constraints = { video: { facingMode: { ideal: 'environment' } } , audio:false };
-        camStream = await navigator.mediaDevices.getUserMedia(constraints);
-        cam.srcObject = camStream; camWrap.style.display='block';
-      }catch(err){
-        alert('Não foi possível acessar a câmera. Garanta que está em HTTPS e permita o acesso. Você ainda pode usar o seletor de arquivos para abrir a câmera.');
-        console.warn(err);
-      }
-    }
-    function stopCam(){ if(camStream){ camStream.getTracks().forEach(t=>t.stop()); cam.srcObject=null; camStream=null; camWrap.style.display='none'; } }
-
-    async function snapPhoto(){
-      if(!camStream){ await openCam(); if(!camStream) return; }
-      const track = camStream.getVideoTracks()[0];
-      const settings = track.getSettings();
-      const w = settings.width || 1600; const h = settings.height || 1200;
-      const sc = snapCanvas; sc.width = w; sc.height = h;
-      const ctx = sc.getContext('2d'); ctx.drawImage(cam, 0, 0, w, h);
-      const blob = await new Promise(res=> sc.toBlob(res, 'image/jpeg', 0.92));
-      const ref = makeRef();
-      const file = new File([blob], `foto_${ref}.jpg`, {type:'image/jpeg'});
-      extraFiles.push(file);
-      addThumbFromFile(file);
-    }
-
-    btnOpenCam.addEventListener('click', openCam);
-    btnCloseCam.addEventListener('click', stopCam);
-    btnSnap.addEventListener('click', snapPhoto);
-
-    // ====== Lista adicional de arquivos (snapshots) ======
-    const extraFiles = [];
-
-    // ====== Envio para WhatsApp ======
+    // ====== Envio ======
     function openWhatsWithText(text, number){ const encoded = encodeURIComponent(text); const num = (number||'').replace(/\D/g,''); const base = num ? `https://wa.me/${num}?text=${encoded}` : `https://wa.me/?text=${encoded}`; window.open(base, '_blank'); }
-
-    async function shareWithFiles(text){
-      const files = Array.from(midia.files||[]).slice(0,10);
-      const list = [...extraFiles, ...files];
-      if(chkCard.checked){ try{ const card = await buildCardFile(); list.unshift(card); }catch(e){ console.warn('Falha ao gerar card', e); }}
-      if(list.length && navigator.canShare && navigator.canShare({ files: list })){
-        try{ await navigator.share({ files: list, text, title: 'Ocorrência de obra' }); return true; }catch(e){ return false; }
-      }
-      return false;
-    }
+    async function shareWithFiles(text){ const list=[...filesState.map(x=>x.file)]; if(chkCard.checked){ try{ const card=await buildCardFile(); list.unshift(card); }catch(e){} } if(list.length && navigator.canShare && navigator.canShare({ files:list })){ try{ await navigator.share({ files:list, text, title:'Ocorrência de obra' }); return true; }catch(e){ return false; } } return false; }
 
     form.addEventListener('submit', async (e)=>{
       e.preventDefault();
@@ -311,21 +285,12 @@
       if(tipo.value==='Outros' && !outroTexto.value.trim()){ alert('Descreva a ocorrência em "Outros".'); return; }
       updatePreview();
       const text = buildMessage();
-
-      // 1) Tenta Web Share (mobile) com arquivos (inclui card/snapshots)
       const shared = await shareWithFiles(text);
-      if(shared){ stopCam(); return; }
-
-      // 2) Fallback desktop: abre WhatsApp (texto) e o card numa aba para salvar; snapshots já ficam nos thumbs
-      if(chkCard.checked){
-        try{
-          const card = await buildCardFile();
-          const url = URL.createObjectURL(card);
-          const w = window.open('about:blank','_blank');
-          if(w){ w.document.write(`<p style=\"font-family:system-ui,Arial\">Salve a imagem e anexe no WhatsApp:</p><img src=\"${url}\" style=\"max-width:100%;height:auto;border:1px solid #ddd;border-radius:8px\">`); w.document.close(); }
-        }catch(e){ console.warn('Falha no fallback do card', e); }
+      if(!shared){
+        // fallback: abre o WhatsApp com o texto e oferece o card pra salvar manualmente
+        if(chkCard.checked){ try{ const card=await buildCardFile(); const url=URL.createObjectURL(card); const w=window.open('about:blank','_blank'); if(w){ w.document.write(`<p style=\"font-family:system-ui,Arial\">Salve a imagem e anexe no WhatsApp:</p><img src=\"${url}\" style=\"max-width:100%;height:auto;border:1px solid #ddd;border-radius:8px\">`); w.document.close(); } }catch(e){} }
+        openWhatsWithText(text, fone.value);
       }
-      openWhatsWithText(text, fone.value);
     });
   </script>
 </body>
