@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Obra — Tarefas</title>
-  <meta name="description" content="Controle de tarefas de obra com fotos, relatório e compartilhamento." />
+  <meta name="description" content="Controle de tarefas de obra com fotos, relatório e compartilhamento. Versão com salvamento de tarefas corrigido." />
   <meta name="theme-color" content="#0ea5e9" />
   <link rel="manifest" href="./manifest.webmanifest">
   <style>
@@ -106,7 +106,8 @@
 
   <!-- Modal de tarefa -->
   <dialog id="dlg" style="border:none;border-radius:16px;padding:0;">
-    <form method="dialog" style="padding:14px;min-width:300px;max-width:560px">
+    <!-- IMPORTANTE: sem method="dialog" para evitar auto-fechamento e perda do submit -->
+    <form id="taskForm" novalidate style="padding:14px;min-width:300px;max-width:560px">
       <h2 id="dlgTitle">Nova tarefa</h2>
       <div style="display:grid;gap:8px;margin-top:8px">
         <input id="fTitulo" placeholder="Título" required>
@@ -128,8 +129,8 @@
         <div class="thumbs" id="fThumbs"></div>
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-        <button class="btn" value="cancel">Cancelar</button>
-        <button class="btn primary" id="btnSave" value="default">Salvar</button>
+        <button class="btn" type="button" id="btnCancel">Cancelar</button>
+        <button class="btn primary" id="btnSave" type="submit">Salvar</button>
       </div>
     </form>
   </dialog>
@@ -205,6 +206,7 @@
 
     /* ===================== CRUD */
     const dlg = $('#dlg');
+    const form = $('#taskForm');
     const fTitulo=$('#fTitulo'), fDisc=$('#fDisc'), fResp=$('#fResp'), fPrazo=$('#fPrazo'), fProg=$('#fProg'), fStatus=$('#fStatus'), fNotas=$('#fNotas'), fBlock=$('#fBlock'), fFotos=$('#fFotos'), fThumbs=$('#fThumbs');
     let editingId=null;
 
@@ -217,6 +219,7 @@
       editingId=id; $('#dlgTitle').textContent='Editar tarefa'; fTitulo.value=t.title; fDisc.value=t.disc; fResp.value=t.owner||''; fPrazo.value=t.due||''; fProg.value=t.progress||0; progVal.textContent=fProg.value; fStatus.value=t.status; fNotas.value=t.notes||''; fBlock.value=t.block||''; fThumbs.innerHTML=(t.photos||[]).map(p=>`<img src="${p}">`).join(''); dlg.showModal();
     }
 
+    // PREVIEW rápido ao selecionar (não depende do salvar)
     fFotos.addEventListener('change', async (e)=>{
       const urls = await photoFilesToDataURLs(e.target.files);
       fThumbs.innerHTML += urls.map(u=>`<img src="${u}">`).join('');
@@ -228,7 +231,8 @@
       return [...fromThumbs, ...pendingFiles];
     }
 
-    $('#btnSave').addEventListener('click', async (e)=>{
+    // SUBMIT do formulário (corrige bug do auto-close do <dialog>)
+    form.addEventListener('submit', async (e)=>{
       e.preventDefault();
       const photos = await gatherPhotosForSave();
       const obj = { id: editingId||uid(), title:fTitulo.value.trim(), disc:fDisc.value, owner:fResp.value.trim(), due:fPrazo.value||null, progress:+fProg.value, status:fStatus.value, notes:fNotas.value.trim(), block:fBlock.value.trim(), block_done:false, photos };
@@ -238,11 +242,12 @@
       save(state); dlg.close(); render();
     });
 
+    $('#btnCancel').addEventListener('click', ()=> dlg.close());
+    $('#btnAdd').onclick=openNew;
+
     /* ===================== Filtros, relatório e I/O */
     $$('#filterDisc, #filterStatus, #filterDate').forEach(el=> el.addEventListener('change', render));
     $('#filterSearch').addEventListener('input', render);
-
-    $('#btnAdd').onclick=openNew;
 
     function report(tasks){
       const d=new Date(); const head=`Relatório — ${d.toLocaleDateString()}\n`+"-".repeat(18)+"\n";
@@ -296,18 +301,20 @@
       fetch(swUrl,{cache:'no-store'}).then(r=>{ if(r.ok) navigator.serviceWorker.register(swUrl); }).catch(()=>{});
     }
 
-    /* ===================== Testes (sem exemplos de dados) */
+    /* ===================== Testes rápidos */
     ;(function selfTests(){
       try{
+        // 1) toDataUrlFile
         console.assert(typeof toDataUrlFile === 'function', 'toDataUrlFile disponível');
         const onePxPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==';
         const f = toDataUrlFile(onePxPng, 't.png');
-        console.assert(f instanceof File, 'toDataUrlFile retorna File');
-        console.assert(f.name === 't.png', 'File tem nome correto');
-        console.log('[TEST] OK — utilidades básicas funcionando');
+        console.assert(f instanceof File && f.name==='t.png', 'File ok');
+        // 2) submissão não fecha o dialog antes do JS
+        const tf = document.getElementById('taskForm');
+        console.assert(tf instanceof HTMLFormElement, 'form ok');
+        console.log('[TEST] OK — básicos');
       }catch(e){ console.error('[TEST] Falhou', e); }
     })();
   </script>
 </body>
 </html>
-
