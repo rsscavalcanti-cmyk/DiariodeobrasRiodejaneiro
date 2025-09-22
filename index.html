@@ -9,7 +9,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Registro Único — Ocorrências (WhatsApp)</title>
-  <meta name="description" content="Registrar UMA ocorrência por vez e enviar texto + card-imagem + anexos via WhatsApp. Campo 'Bloco/Setor' livre, excluir fotos duplicadas e abertura de câmera nativa garantida." />
+  <meta name="description" content="Registrar UMA ocorrência por vez e enviar texto + anexos via WhatsApp. Campo 'Bloco/Setor' livre, excluir fotos duplicadas e abertura de câmera nativa garantida." />
   <style>
     :root{ --bg:#f6fbff; --paper:#fff; --ink:#0f172a; --muted:#667085; --line:#e5eef7; --brand:#0ea5e9; --ok:#16a34a; --warn:#f59e0b; --bad:#ef4444; --radius:16px }
     *{box-sizing:border-box}
@@ -57,7 +57,7 @@
         <div class="stamp">🕒 Data/hora (Brasília): <b id="ts"></b></div>
       </div>
       <div class="opts">
-        <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="chkCard" checked> Incluir *card‑imagem* formatado</label>
+        <!-- checkbox do card removido -->
         <button class="btn" id="btnClear">Limpar</button>
       </div>
     </header>
@@ -170,8 +170,6 @@
     <footer>— <strong><em>Registro para Gestão</em></strong></footer>
   </div>
 
-  <canvas id="cardCanvas" width="1080" height="1350"></canvas>
-
   <script>
     const tz = 'America/Sao_Paulo';
     function nowBr(){ const d = new Date(); return new Intl.DateTimeFormat('pt-BR',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(d); }
@@ -195,13 +193,16 @@
     const prazo = document.getElementById('prazo');
     const fone = document.getElementById('fone');
     const thumbs = document.getElementById('thumbs');
-    const chkCard = document.getElementById('chkCard');
-    const cardCanvas = document.getElementById('cardCanvas');
 
     const btnCamera = document.getElementById('btnCamera');
     const btnGallery = document.getElementById('btnGallery');
     const inputCamera = document.getElementById('inputCamera');
     const inputGallery = document.getElementById('inputGallery');
+
+    // Mostrar campo "Outros"
+    tipo.addEventListener('change', ()=>{
+      lblOutro.style.display = (tipo.value === 'Outros') ? 'grid' : 'none';
+    });
 
     // Força abrir a CÂMERA nativa (Android/iOS) usando capture="environment"
     btnCamera.addEventListener('click', ()=> inputCamera.click());
@@ -239,14 +240,13 @@
     inputCamera.addEventListener('change', e=>{ const list = Array.from(e.target.files||[]); addFiles(list); inputCamera.value=''; });
     inputGallery.addEventListener('change', e=>{ const list = Array.from(e.target.files||[]); addFiles(list); inputGallery.value=''; });
 
-    // Mensagem
+    // Mensagem (apenas TEXTO quando não houver anexos)
     function buildMessage(){
       const ref = makeRef();
       const dataHora = nowBr();
       const t = tipo.value || '(sem tipo)';
       const t2 = (t === 'Outros' ? (outroTexto.value.trim()||'(descrever)') : t);
       const prazoFmt = (prazo.value? isoBrDate(prazo.value): '-');
-      const anexos = filesState.length + (chkCard.checked?1:0);
       const linhas = [
         `*🏗️ OCORRÊNCIA DE OBRA*  •  *Ref:* ${ref}`,
         `━━━━━━━━━━━━━━━━━━━━`,
@@ -260,7 +260,7 @@
         `*📅 Prazo desejado:* ${prazoFmt}`,
         `*👷 Responsável/Equipe:* ${resp.value||'-'}`,
         `*🕒 Data/Hora (Brasília):* ${dataHora}`,
-        filesState.length? `*📎 Anexos:* ${anexos} arquivo(s)` : null,
+        filesState.length? `*📎 Anexos:* ${filesState.length} arquivo(s)` : null,
         `━━━━━━━━━━━━━━━━━━━━`,
         `*_*Registro para Gestão*_*`
       ].filter(Boolean);
@@ -270,26 +270,27 @@
     const preview = document.getElementById('preview');
     document.getElementById('btnPreview').addEventListener('click', ()=> preview.textContent = buildMessage());
     document.getElementById('btnCopy').addEventListener('click', ()=>{ const text = buildMessage(); navigator.clipboard?.writeText(text).then(()=>{ preview.textContent = text + "\n\n(copiado)"; }); });
-    document.getElementById('btnClear').addEventListener('click', ()=>{ form.reset(); thumbs.innerHTML=''; filesState=[]; preview.textContent=''; });
-
-    // Card
-    function wrapText(ctx, text, x, y, maxW, lineH){ const words = text.split(/\s+/); let line=''; const lines=[]; for(let i=0;i<words.length;i++){ const test=line+words[i]+' '; if(ctx.measureText(test).width>maxW && i>0){ lines.push(line.trim()); line=words[i]+' '; } else { line=test; } } lines.push(line.trim()); lines.forEach((ln,i)=>ctx.fillText(ln,x,y+i*lineH)); return y+(lines.length-1)*lineH; }
-    async function buildCardFile(){ const W=1080,H=1350,P=64; const ctx=cardCanvas.getContext('2d'); ctx.clearRect(0,0,W,H); const g=ctx.createLinearGradient(0,0,0,H); g.addColorStop(0,'#eaf6ff'); g.addColorStop(1,'#ffffff'); ctx.fillStyle=g; ctx.fillRect(0,0,W,H); ctx.fillStyle='#0f172a'; ctx.font='bold 48px Inter, Arial'; ctx.fillText('OCORRÊNCIA DE OBRA', P, P+8); const ref=makeRef(); ctx.font='bold 28px Inter, Arial'; ctx.fillStyle='#0ea5e9'; ctx.fillText(`Ref: ${ref}`, P, P+54); const boxY=P+90, boxH=H-boxY-180, boxR=28; ctx.fillStyle='#00000010'; ctx.fillRect(P+6,boxY+6,W-P*2,boxH); ctx.fillStyle='#ffffff'; ctx.strokeStyle='#e5eef7'; ctx.lineWidth=4; const bw=W-P*2,bh=boxH,x=P,y=boxY,r=boxR; ctx.beginPath(); ctx.moveTo(x+r,y); ctx.lineTo(x+bw-r,y); ctx.quadraticCurveTo(x+bw,y,x+bw,y+r); ctx.lineTo(x+bw,y+bh-r); ctx.quadraticCurveTo(x+bw,y+bh,x+bw-r,y+bh); ctx.lineTo(x+r,y+bh); ctx.quadraticCurveTo(x,y+bh,x,y+bh-r); ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.fillStyle='#0f172a'; ctx.font='600 34px Inter, Arial'; let yy=y+56; const lh=44, maxW=bw-40, xx=x+20; const linhas=[ `Tipo: ${tipo.value==='Outros' ? (outroTexto.value.trim()||'(descrever)') : (tipo.value||'(sem tipo)')}`, `Bloco/Setor: ${bloco.value||'-'}`, `Pav/Unidade: ${pav.value||'-'}`, `Local: ${localDet.value||'-'}`, `Descrição:`]; linhas.forEach(t=>{ ctx.fillText(t,xx,yy); yy+=lh; }); ctx.font='400 30px Inter, Arial'; yy=wrapText(ctx,(desc.value.trim()||'-'),xx,yy,maxW,40)+26; ctx.font='600 34px Inter, Arial'; [ `Ação solicitada: ${acao.value}`, `Prioridade: ${prio.value}`, `Prazo desejado: ${prazo.value? isoBrDate(prazo.value): '-'}`, `Resp./Equipe: ${resp.value||'-'}`, `Data/Hora (Brasília): ${nowBr()}` ].forEach(t=>{ ctx.fillText(t,xx,yy); yy+=lh; }); ctx.font='italic 700 26px Inter, Arial'; ctx.fillStyle='#64748b'; ctx.fillText('— Registro para Gestão', P, H-90); ctx.save(); ctx.translate(W-140,H-70); ctx.rotate(-Math.PI/12); ctx.globalAlpha=0.08; ctx.fillStyle='#0ea5e9'; ctx.font='900 90px Inter, Arial'; ctx.fillText('SYSTEM', -200, 0); ctx.restore(); const blob = await new Promise(res=> cardCanvas.toBlob(res, 'image/png', 0.92)); return new File([blob], `ocorrencia_${ref}.png`, {type:'image/png'}); }
+    document.getElementById('btnClear').addEventListener('click', ()=>{ form.reset(); thumbs.innerHTML=''; filesState=[]; preview.textContent=''; lblOutro.style.display='none'; });
 
     // Envio
     function openWhatsWithText(text, number){ const encoded = encodeURIComponent(text); const num = (number||'').replace(/\D/g,''); const base = num ? `https://wa.me/${num}?text=${encoded}` : `https://wa.me/?text=${encoded}`; window.open(base, '_blank'); }
-    async function shareWithFiles(text){ const list=[...filesState.map(x=>x.file)]; if(chkCard.checked){ try{ const card=await buildCardFile(); list.unshift(card); }catch(e){} } if(list.length && navigator.canShare && navigator.canShare({ files:list })){ try{ await navigator.share({ files:list, text, title:'Ocorrência de obra' }); return true; }catch(e){ return false; } } return false; }
 
-    form.addEventListener('submit', async (e)=>{
+    async function shareWithFiles(text){
+      const list=[...filesState.map(x=>x.file)];
+      if(list.length && navigator.canShare && navigator.canShare({ files:list })){
+        try{ await navigator.share({ files:list, text, title:'Ocorrência de obra' }); return true; }catch(e){ return false; }
+      }
+      return false;
+    }
+
+    // Validar e enviar
+    document.getElementById('form').addEventListener('submit', async (e)=>{
       e.preventDefault();
       if(!tipo.value){ alert('Selecione o tipo de ocorrência.'); return; }
       if(tipo.value==='Outros' && !outroTexto.value.trim()){ alert('Descreva a ocorrência em "Outros".'); return; }
       const text = buildMessage();
       const shared = await shareWithFiles(text);
-      if(!shared){
-        if(chkCard.checked){ try{ const card=await buildCardFile(); const url=URL.createObjectURL(card); const w=window.open('about:blank','_blank'); if(w){ w.document.write(`<p style=\"font-family:system-ui,Arial\">Salve a imagem e anexe no WhatsApp:</p><img src=\"${url}\" style=\"max-width:100%;height:auto;border:1px solid #ddd;border-radius:8px\">`); w.document.close(); } }catch(e){} }
-        openWhatsWithText(text, fone.value);
-      }
+      if(!shared){ openWhatsWithText(text, fone.value); }
     });
   </script>
 </body>
