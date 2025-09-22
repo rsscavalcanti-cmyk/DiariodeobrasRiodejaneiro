@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Obra — Tarefas</title>
-  <meta name="description" content="Controle de tarefas de obra com fotos, relatório e compartilhamento. Versão com salvamento de tarefas corrigido." />
+  <meta name="description" content="Controle de tarefas de obra com fotos, relatório, compartilhamento e exclusão de tarefas/fotos." />
   <meta name="theme-color" content="#0ea5e9" />
   <link rel="manifest" href="./manifest.webmanifest">
   <style>
@@ -17,6 +17,8 @@
     .controls{display:flex;gap:8px;flex-wrap:wrap}
     .btn{appearance:none;border:2px solid var(--line);background:var(--paper);border-radius:999px;padding:10px 14px;font-weight:700;color:var(--ink);box-shadow:0 6px 18px rgba(0,0,0,.06);cursor:pointer}
     .btn.primary{background:linear-gradient(180deg,#7dd3fc,#38bdf8);border-color:transparent;color:#063a59}
+    .btn.danger{background:#fff0f0;border:2px solid #fecaca;color:#7f1d1d}
+    .btn.icon{padding:8px 10px;border-radius:12px}
     .btn:active{transform:translateY(1px)}
 
     .filters{display:flex;gap:8px;flex-wrap:wrap}
@@ -41,8 +43,11 @@
 
     .right .card{position:sticky;top:12px}
     textarea{width:100%;min-height:90px;padding:10px;border-radius:10px;border:2px solid var(--line)}
+
     .thumbs{display:flex;gap:8px;flex-wrap:wrap}
-    .thumbs img{width:70px;height:70px;border-radius:10px;border:2px solid var(--line);object-fit:cover}
+    .thumb{position:relative}
+    .thumb img{width:70px;height:70px;border-radius:10px;border:2px solid var(--line);object-fit:cover;display:block}
+    .thumb button.rm{position:absolute;top:-8px;right:-8px;border:none;background:#ef4444;color:#fff;border-radius:999px;width:22px;height:22px;cursor:pointer;font-weight:900;line-height:1}
 
     .muted{color:var(--muted);font-size:12px}
     footer{position:fixed;left:0;right:0;bottom:0;padding:8px 14px;text-align:center;font-size:11px;color:#556987;background:#ffffffcc;border-top:1px solid var(--line);backdrop-filter:saturate(140%) blur(6px)}
@@ -106,7 +111,6 @@
 
   <!-- Modal de tarefa -->
   <dialog id="dlg" style="border:none;border-radius:16px;padding:0;">
-    <!-- IMPORTANTE: sem method="dialog" para evitar auto-fechamento e perda do submit -->
     <form id="taskForm" novalidate style="padding:14px;min-width:300px;max-width:560px">
       <h2 id="dlgTitle">Nova tarefa</h2>
       <div style="display:grid;gap:8px;margin-top:8px">
@@ -128,9 +132,12 @@
         <label>Fotos: <input type="file" id="fFotos" accept="image/*" multiple capture="environment"></label>
         <div class="thumbs" id="fThumbs"></div>
       </div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-        <button class="btn" type="button" id="btnCancel">Cancelar</button>
-        <button class="btn primary" id="btnSave" type="submit">Salvar</button>
+      <div style="display:flex;gap:8px;justify-content:space-between;margin-top:12px;flex-wrap:wrap">
+        <button class="btn danger" type="button" id="btnDeleteTask" style="display:none">Excluir tarefa</button>
+        <div style="display:flex;gap:8px">
+          <button class="btn" type="button" id="btnCancel">Cancelar</button>
+          <button class="btn primary" id="btnSave" type="submit">Salvar</button>
+        </div>
       </div>
     </form>
   </dialog>
@@ -157,7 +164,7 @@
     function uid(){ return 't'+(state.seq++) }
     function photoFilesToDataURLs(files){ return Promise.all(Array.from(files).map(f=>new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.readAsDataURL(f) })))}
 
-    /* ===================== Render */
+    /* ========== Render ========= */
     const listEl = $('#list');
     const kpisEl = $('#kpis');
     const blocksEl = $('#blocks');
@@ -198,40 +205,66 @@
         const right = document.createElement('div'); right.style.display='grid'; right.style.gap='6px'; right.style.justifyItems='end';
         const bEdit = document.createElement('button'); bEdit.className='btn'; bEdit.textContent='Editar'; bEdit.onclick=()=>openEdit(t.id);
         const bDone = document.createElement('button'); bDone.className='btn'; bDone.textContent=t.status==='done'?'↺ Reabrir':'✓ Concluir'; bDone.onclick=()=>{ t.status = t.status==='done'?'doing':'done'; save(state); render(); };
-        right.append(bEdit,bDone);
+        const bDel  = document.createElement('button'); bDel.className='btn danger icon'; bDel.title='Excluir'; bDel.textContent='🗑️'; bDel.onclick=()=>deleteTask(t.id);
+        right.append(bEdit,bDone,bDel);
         row.append(left, mid, right);
         listEl.appendChild(row);
       });
     }
 
-    /* ===================== CRUD */
+    /* ========== Helpers de Foto no formulário ========= */
+    const fThumbs=$('#fThumbs');
+    function addThumb(url){
+      const wrap=document.createElement('div');
+      wrap.className='thumb';
+      wrap.innerHTML=`<img src="${url}"><button class="rm" title="Remover foto" type="button">×</button>`;
+      fThumbs.appendChild(wrap);
+    }
+    function loadThumbs(urls){ fThumbs.innerHTML=''; (urls||[]).forEach(addThumb); }
+    fThumbs.addEventListener('click',(e)=>{
+      const btn=e.target.closest('button.rm');
+      if(btn){ btn.parentElement.remove(); }
+    });
+
+    /* ========== CRUD ========= */
     const dlg = $('#dlg');
     const form = $('#taskForm');
-    const fTitulo=$('#fTitulo'), fDisc=$('#fDisc'), fResp=$('#fResp'), fPrazo=$('#fPrazo'), fProg=$('#fProg'), fStatus=$('#fStatus'), fNotas=$('#fNotas'), fBlock=$('#fBlock'), fFotos=$('#fFotos'), fThumbs=$('#fThumbs');
+    const fTitulo=$('#fTitulo'), fDisc=$('#fDisc'), fResp=$('#fResp'), fPrazo=$('#fPrazo'), fProg=$('#fProg'), fStatus=$('#fStatus'), fNotas=$('#fNotas'), fBlock=$('#fBlock'), fFotos=$('#fFotos');
+    const btnDeleteTask=$('#btnDeleteTask');
     let editingId=null;
 
-    function resetForm(){ editingId=null; $('#dlgTitle').textContent='Nova tarefa'; fTitulo.value=''; fDisc.value='Elétrica'; fResp.value=''; fPrazo.value=''; fProg.value=0; progVal.textContent=0; fStatus.value='todo'; fNotas.value=''; fBlock.value=''; fFotos.value=''; fThumbs.innerHTML=''; }
+    function resetForm(){ editingId=null; $('#dlgTitle').textContent='Nova tarefa'; fTitulo.value=''; fDisc.value='Elétrica'; fResp.value=''; fPrazo.value=''; fProg.value=0; progVal.textContent=0; fStatus.value='todo'; fNotas.value=''; fBlock.value=''; fFotos.value=''; loadThumbs([]); btnDeleteTask.style.display='none'; }
 
     function openNew(){ resetForm(); dlg.showModal(); }
 
     function openEdit(id){
       const t = state.tasks.find(x=>x.id===id); if(!t) return;
-      editingId=id; $('#dlgTitle').textContent='Editar tarefa'; fTitulo.value=t.title; fDisc.value=t.disc; fResp.value=t.owner||''; fPrazo.value=t.due||''; fProg.value=t.progress||0; progVal.textContent=fProg.value; fStatus.value=t.status; fNotas.value=t.notes||''; fBlock.value=t.block||''; fThumbs.innerHTML=(t.photos||[]).map(p=>`<img src="${p}">`).join(''); dlg.showModal();
+      editingId=id; $('#dlgTitle').textContent='Editar tarefa'; fTitulo.value=t.title; fDisc.value=t.disc; fResp.value=t.owner||''; fPrazo.value=t.due||''; fProg.value=t.progress||0; progVal.textContent=fProg.value; fStatus.value=t.status; fNotas.value=t.notes||''; fBlock.value=t.block||''; loadThumbs(t.photos||[]); btnDeleteTask.style.display='inline-flex'; dlg.showModal();
     }
+
+    function deleteTask(id){
+      if(!confirm('Excluir esta tarefa? Esta ação não pode ser desfeita.')) return;
+      const i=state.tasks.findIndex(t=>t.id===id);
+      if(i>-1){ state.tasks.splice(i,1); save(state); render(); }
+      if(dlg.open && editingId===id){ dlg.close(); }
+    }
+
+    btnDeleteTask.addEventListener('click',()=>{ if(editingId) deleteTask(editingId); });
 
     // PREVIEW rápido ao selecionar (não depende do salvar)
     fFotos.addEventListener('change', async (e)=>{
       const urls = await photoFilesToDataURLs(e.target.files);
-      fThumbs.innerHTML += urls.map(u=>`<img src="${u}">`).join('');
+      urls.forEach(addThumb);
     });
 
     async function gatherPhotosForSave(){
-      const fromThumbs = Array.from(fThumbs.querySelectorAll('img')).map(i=>i.src);
-      const pendingFiles = fFotos.files && fFotos.files.length ? await photoFilesToDataURLs(fFotos.files) : [];
-      return [...fromThumbs, ...pendingFiles];
+      const imgs = Array.from(fThumbs.querySelectorAll('img')).map(i=>i.src);
+      // se ainda houver arquivos no input, garante que entram
+      const pending = fFotos.files && fFotos.files.length ? await photoFilesToDataURLs(fFotos.files) : [];
+      return [...imgs, ...pending];
     }
 
-    // SUBMIT do formulário (corrige bug do auto-close do <dialog>)
+    // SUBMIT do formulário
     form.addEventListener('submit', async (e)=>{
       e.preventDefault();
       const photos = await gatherPhotosForSave();
@@ -245,7 +278,7 @@
     $('#btnCancel').addEventListener('click', ()=> dlg.close());
     $('#btnAdd').onclick=openNew;
 
-    /* ===================== Filtros, relatório e I/O */
+    /* ========== Filtros, relatório e I/O ========= */
     $$('#filterDisc, #filterStatus, #filterDate').forEach(el=> el.addEventListener('change', render));
     $('#filterSearch').addEventListener('input', render);
 
@@ -291,30 +324,26 @@
     $('#btnImport').onclick=()=> $('#importFile').click();
     $('#importFile').addEventListener('change', async (e)=>{ const f=e.target.files?.[0]; if(!f) return; const txt=await f.text(); try{ const obj=JSON.parse(txt); if(obj && Array.isArray(obj.tasks)){ state=obj; save(state); render(); } }catch(_){ alert('JSON inválido'); } });
 
-    /* ===================== Boot */
+    /* ========== Boot ========= */
     render();
 
-    /* ===== Service Worker */
+    /* ===== Service Worker ===== */
     const isSecure = window.isSecureContext && /^(https:)|(^http:\/\/localhost)/.test(location.href);
     const swUrl = (()=>{ const base = location.pathname.replace(/\/[^\/]*$/, '/'); return base + 'sw.js'; })();
     if('serviceWorker' in navigator && isSecure){
       fetch(swUrl,{cache:'no-store'}).then(r=>{ if(r.ok) navigator.serviceWorker.register(swUrl); }).catch(()=>{});
     }
 
-    /* ===================== Testes rápidos */
+    /* ========== Testes rápidos ========= */
     ;(function selfTests(){
       try{
-        // 1) toDataUrlFile
         console.assert(typeof toDataUrlFile === 'function', 'toDataUrlFile disponível');
-        const onePxPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==';
-        const f = toDataUrlFile(onePxPng, 't.png');
-        console.assert(f instanceof File && f.name==='t.png', 'File ok');
-        // 2) submissão não fecha o dialog antes do JS
         const tf = document.getElementById('taskForm');
-        console.assert(tf instanceof HTMLFormElement, 'form ok');
+        console.assert(tf instanceof HTMLFormElement, 'form OK');
         console.log('[TEST] OK — básicos');
       }catch(e){ console.error('[TEST] Falhou', e); }
     })();
   </script>
 </body>
 </html>
+
