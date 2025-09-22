@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Obra — Tarefas</title>
-  <meta name="description" content="Controle simples de tarefas de obra com fotos e relatório." />
+  <meta name="description" content="Controle de tarefas de obra com fotos, relatório e compartilhamento." />
   <meta name="theme-color" content="#0ea5e9" />
   <link rel="manifest" href="./manifest.webmanifest">
   <style>
@@ -140,7 +140,7 @@
 
   <script>
     /* ===================== Armazenamento ===================== */
-    const KEY='obra-app-v4';
+    const KEY='obra-app-final';
     const db = { tasks: [], seq: 1 };
     const load=()=>{ try{ return JSON.parse(localStorage.getItem(KEY))||db }catch(_){ return db } };
     const save=(state)=>localStorage.setItem(KEY, JSON.stringify(state));
@@ -151,13 +151,12 @@
     const $$=sel=>Array.from(document.querySelectorAll(sel));
     const pad=n=>String(n).padStart(2,'0');
     const todayStr=()=>{const d=new Date();return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`};
-    // ÚNICA definição de toDataUrlFile (evita erro de redefinição)
     const toDataUrlFile=(dataUrl, name='foto.jpg')=>{ const [hdr,b64]=dataUrl.split(','); const mime=(hdr.match(/data:(.*?);/)||[])[1]||'image/jpeg'; const bin=atob(b64||''); const len=bin.length; const bytes=new Uint8Array(len); for(let i=0;i<len;i++){bytes[i]=bin.charCodeAt(i)}; return new File([bytes], name, {type:mime}); };
 
     function uid(){ return 't'+(state.seq++) }
     function photoFilesToDataURLs(files){ return Promise.all(Array.from(files).map(f=>new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.readAsDataURL(f) })))}
 
-    /* ===================== Render ===================== */
+    /* ===================== Render */
     const listEl = $('#list');
     const kpisEl = $('#kpis');
     const blocksEl = $('#blocks');
@@ -204,7 +203,7 @@
       });
     }
 
-    /* ===================== CRUD ===================== */
+    /* ===================== CRUD */
     const dlg = $('#dlg');
     const fTitulo=$('#fTitulo'), fDisc=$('#fDisc'), fResp=$('#fResp'), fPrazo=$('#fPrazo'), fProg=$('#fProg'), fStatus=$('#fStatus'), fNotas=$('#fNotas'), fBlock=$('#fBlock'), fFotos=$('#fFotos'), fThumbs=$('#fThumbs');
     let editingId=null;
@@ -218,13 +217,11 @@
       editingId=id; $('#dlgTitle').textContent='Editar tarefa'; fTitulo.value=t.title; fDisc.value=t.disc; fResp.value=t.owner||''; fPrazo.value=t.due||''; fProg.value=t.progress||0; progVal.textContent=fProg.value; fStatus.value=t.status; fNotas.value=t.notes||''; fBlock.value=t.block||''; fThumbs.innerHTML=(t.photos||[]).map(p=>`<img src="${p}">`).join(''); dlg.showModal();
     }
 
-    // PREVIEW rápido ao selecionar (não depende do salvar)
     fFotos.addEventListener('change', async (e)=>{
       const urls = await photoFilesToDataURLs(e.target.files);
       fThumbs.innerHTML += urls.map(u=>`<img src="${u}">`).join('');
     });
 
-    // GARANTE salvar fotos mesmo clicando "Salvar" logo após escolher
     async function gatherPhotosForSave(){
       const fromThumbs = Array.from(fThumbs.querySelectorAll('img')).map(i=>i.src);
       const pendingFiles = fFotos.files && fFotos.files.length ? await photoFilesToDataURLs(fFotos.files) : [];
@@ -241,7 +238,7 @@
       save(state); dlg.close(); render();
     });
 
-    /* ===================== Filtros, relatório e I/O ===================== */
+    /* ===================== Filtros, relatório e I/O */
     $$('#filterDisc, #filterStatus, #filterDate').forEach(el=> el.addEventListener('change', render));
     $('#filterSearch').addEventListener('input', render);
 
@@ -267,7 +264,6 @@
       else{ $('#reportBox').value=text; alert('Relatório pronto. Copie e cole.'); }
     };
 
-    // Compartilhar fotos + relatório (Web Share API Level 2)
     async function shareWithPhotos(){
       const tasks = currentFiltered();
       const text = report(tasks);
@@ -290,28 +286,17 @@
     $('#btnImport').onclick=()=> $('#importFile').click();
     $('#importFile').addEventListener('change', async (e)=>{ const f=e.target.files?.[0]; if(!f) return; const txt=await f.text(); try{ const obj=JSON.parse(txt); if(obj && Array.isArray(obj.tasks)){ state=obj; save(state); render(); } }catch(_){ alert('JSON inválido'); } });
 
-    /* ===================== Seeds (apenas exemplos) ===================== */
-    if(state.tasks.length===0){
-      state.tasks = [
-        {id:uid(), title:'Exemplo — Elétrica', disc:'Elétrica', owner:'', due:todayStr(), progress:0, status:'todo', notes:'', block:'', photos:[]},
-        {id:uid(), title:'Exemplo — Hidráulica', disc:'Hidráulica', owner:'', due:'', progress:0, status:'todo', notes:'', block:'', photos:[]},
-        {id:uid(), title:'Exemplo — Incêndio', disc:'Incêndio', owner:'', due:'', progress:0, status:'todo', notes:'', block:'', photos:[]},
-        {id:uid(), title:'Exemplo — Gás', disc:'Gás', owner:'', due:'', progress:0, status:'todo', notes:'', block:'', photos:[]},
-      ];
-      save(state);
-    }
-
-    /* ===================== Boot ===================== */
+    /* ===================== Boot */
     render();
 
-    /* ===== Service Worker (produção) ===== */
+    /* ===== Service Worker */
     const isSecure = window.isSecureContext && /^(https:)|(^http:\/\/localhost)/.test(location.href);
     const swUrl = (()=>{ const base = location.pathname.replace(/\/[^\/]*$/, '/'); return base + 'sw.js'; })();
     if('serviceWorker' in navigator && isSecure){
       fetch(swUrl,{cache:'no-store'}).then(r=>{ if(r.ok) navigator.serviceWorker.register(swUrl); }).catch(()=>{});
     }
 
-    /* ===================== Testes rápidos (dev) ===================== */
+    /* ===================== Testes (sem exemplos de dados) */
     ;(function selfTests(){
       try{
         console.assert(typeof toDataUrlFile === 'function', 'toDataUrlFile disponível');
@@ -325,3 +310,4 @@
   </script>
 </body>
 </html>
+
